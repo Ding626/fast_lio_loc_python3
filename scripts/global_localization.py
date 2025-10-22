@@ -7,14 +7,15 @@ import _thread as thread
 import time
 
 import open3d as o3d
-import rospy
+import rclpy
+from rclpy.node import Node
+from rclpy.qos import QoSProfile
 import ros_numpy
 from geometry_msgs.msg import PoseWithCovarianceStamped, Pose, Point, Quaternion
 from nav_msgs.msg import Odometry
 from sensor_msgs.msg import PointCloud2
 import numpy as np
-import tf
-import tf.transformations
+import tf_transformations
 
 global_map = None
 initialized = False
@@ -23,32 +24,33 @@ T_map_to_odom_last = np.eye(4)
 cur_odom = None
 cur_scan = None
 
+# node will be set in main()
+node = None
+
 
 def pose_to_mat(pose_msg):
-    print("pose_to_mat..................")
-    # defensive: ensure pose_msg has the expected structure
+    """Convert a PoseWithCovarianceStamped or Odometry (or raw Pose) into a 4x4 matrix."""
     if pose_msg is None:
-        rospy.logwarn('pose_to_mat received None pose_msg')
+        if node:
+            node.get_logger().warning('pose_to_mat received None pose_msg')
         return np.eye(4)
 
-    # pose_msg can be either PoseWithCovarianceStamped or Odometry in this repo
-    # try to access .pose.pose, otherwise try to handle Pose directly
+    # pose_msg can be Odometry, PoseWithCovarianceStamped, or Pose
     try:
         pos = pose_msg.pose.pose.position
         ori = pose_msg.pose.pose.orientation
     except Exception:
         try:
-            # maybe a Pose (not stamped)
             pos = pose_msg.position
             ori = pose_msg.orientation
         except Exception as e:
-            rospy.logerr('pose_to_mat: unexpected pose_msg type: %s', e)
+            if node:
+                node.get_logger().error('pose_to_mat: unexpected pose_msg type: %s' % e)
             return np.eye(4)
 
-    return np.matmul(
-        tf.listener.xyz_to_mat44(pos),
-        tf.listener.xyzw_to_mat44(ori),
-    )
+    T_trans = tf_transformations.translation_matrix((pos.x, pos.y, pos.z))
+    T_rot = tf_transformations.quaternion_matrix((ori.x, ori.y, ori.z, ori.w))
+    return np.matmul(T_trans, T_rot)
   
 
 def msg_to_array(pc_msg):
@@ -119,7 +121,8 @@ def crop_global_map_in_FOV(global_map, pose_estimation, cur_odom):
     # print(cur_odom)
     # defensive: ensure cur_odom is present and has header
     if cur_odom is None:
-        rospy.logwarn('crop_global_map_in_FOV: cur_odom is None, returning empty submap')
+        if node:
+            node.get_logger().warning('crop_global_map_in_FOV: cur_odom is None, returning empty submap')
         empty_pc = o3d.geometry.PointCloud()
         empty_pc.points = o3d.utility.Vector3dVector(np.zeros((0, 3)))
         return empty_pc
@@ -174,7 +177,8 @@ def global_localization(pose_estimation):
     global global_map, cur_scan, cur_odom, T_map_to_odom
     # 用icp配准
     # print(global_map, cur_scan, T_map_to_odom)
-    rospy.loginfo('Global localization by scan-to-map matching......')
+    if node:
+        node.get_logger().info('Global localization by scan-to-map matching......')
 
     # TODO 这里注意线程安全
     scan_tobe_mapped = copy.copy(cur_scan)
@@ -224,8 +228,9 @@ def global_localization(pose_estimation):
     print(transformation)
     toc = time.time()
     print("匹配中......................")
-    rospy.loginfo('Time: {}'.format(toc - tic))
-    rospy.loginfo('')
+    if node:
+        node.get_logger().info('Time: {}'.format(toc - tic))
+        node.get_logger().info('')
     print("fitness值为")
     print(fitness)
     # 当全局定位成功时才更新map2odom
@@ -242,8 +247,8 @@ def global_localization(pose_estimation):
         
         # 发布map_to_odom
         map_to_odom = Odometry()
-        xyz = tf.transformations.translation_from_matrix(T_map_to_odom)
-        quat = tf.transformations.quaternion_from_matrix(T_map_to_odom)
+        xyz = tf_transformations.translation_from_matrix(T_map_to_odom)
+        quat = tf_transformations.quaternion_from_matrix(T_map_to_odom)
         map_to_odom.pose.pose = Pose(Point(*xyz), Quaternion(*quat))
         # map_to_odom.header.stamp = cur_odom.header.stamp
         map_to_odom.header.stamp = lidar_time
@@ -251,9 +256,10 @@ def global_localization(pose_estimation):
         pub_map_to_odom.publish(map_to_odom)
         return True
     else:
-        rospy.logwarn('Not match!!!!')
-        rospy.logwarn('{}'.format(transformation))
-        rospy.logwarn('fitness score:{}'.format(fitness))
+        if node:
+            node.get_logger().warning('Not match!!!!')
+            node.get_logger().warning('{}' .format(transformation))
+            node.get_logger().warning('fitness score:{}'.format(fitness))
         return False
 
 
@@ -272,7 +278,8 @@ def initialize_global_map(pc_msg):
     global_map = o3d.geometry.PointCloud()
     global_map.points = o3d.utility.Vector3dVector(msg_to_array(pc_msg)[:, :3])
     global_map = voxel_down_sample(global_map, MAP_VOXEL_SIZE)
-    rospy.loginfo('Global map received.')
+    if node:
+        node.get_logger().info('Global map received.')
 
 
 def cb_save_cur_odom(odom_msg):
@@ -304,13 +311,13 @@ def thread_localization():
     global T_map_to_odom
     while True:
         # 每隔一段时间进行全局定位
-        rospy.sleep(1 / FREQ_LOCALIZATION)
+        time.sleep(1 / FREQ_LOCALIZATION)
         # TODO 由于这里Fast lio发布的scan是已经转换到odom系下了 所以每次全局定位的初始解就是上一次的map2odom 不需要再拿odom了
         global_localization(T_map_to_odom)
 
 
 if __name__ == '__main__':
-    global lidar_time 
+    global lidar_time, pub_pc_in_map, pub_submap, pub_map_to_odom, node
     MAP_VOXEL_SIZE = 0.1
     SCAN_VOXEL_SIZE = 0.1
 
@@ -319,55 +326,82 @@ if __name__ == '__main__':
 
     # The threshold of global localization,
     # only those scan2map-matching with higher fitness than LOCALIZATION_TH will be taken
-    # LOCALIZATION_TH = 0.95
     LOCALIZATION_TH = 0.91
 
     # FOV(rad), modify this according to your LiDAR type
-    # FOV = 1.6
     FOV = 3.15
 
     # The farthest distance(meters) within FOV
-    # FOV_FAR = 150
     FOV_FAR = 30
 
-    rospy.init_node('fast_lio_localization')
-    rospy.loginfo('Localization Node Inited...')
+    rclpy.init()
+    node = Node('fast_lio_localization')
+    node.get_logger().info('Localization Node Inited...')
 
+    qos = QoSProfile(depth=10)
     # publisher
-    pub_pc_in_map = rospy.Publisher('/cur_scan_in_map', PointCloud2, queue_size=1)#发布的是/cloud_registered(小车雷达点云）将其转换到odom坐标系下
-    pub_submap = rospy.Publisher('/submap', PointCloud2, queue_size=1) #裁剪后的map
-    pub_map_to_odom = rospy.Publisher('/map_to_odom', Odometry, queue_size=1)
+    pub_pc_in_map = node.create_publisher(PointCloud2, '/cur_scan_in_map', qos)
+    pub_submap = node.create_publisher(PointCloud2, '/submap', qos)
+    pub_map_to_odom = node.create_publisher(Odometry, '/map_to_odom', qos)
 
+    # subscribers
+    node.create_subscription(PointCloud2, '/cloud_registered', lambda msg: cb_save_cur_scan(msg), qos)
+    node.create_subscription(Odometry, '/t265/odom/sample', lambda msg: cb_save_cur_odom(msg), qos)
 
-    # rospy.Subscriber('/cloud_registered', PointCloud2, cb_save_cur_scan, queue_size=1)
-    # rospy.Subscriber('/Odometry', Odometry, cb_save_cur_odom, queue_size=1)
-    rospy.Subscriber('/cloud_registered', PointCloud2, cb_save_cur_scan, queue_size=1)#小车雷达扫描的点云
-    rospy.Subscriber('/t265/odom/sample', Odometry, cb_save_cur_odom, queue_size=1)
+    # helper to wait for a single message on a topic
+    def wait_for_message(topic, msg_type, timeout=None):
+        container = {'msg': None}
+        evt = threading.Event()
+
+        def _cb(m):
+            container['msg'] = m
+            evt.set()
+
+        sub = node.create_subscription(msg_type, topic, _cb, qos)
+        got = evt.wait(timeout)
+        node.destroy_subscription(sub)
+        if got:
+            return container['msg']
+        return None
 
     # 初始化全局地图
-    rospy.logwarn('Waiting for global map......')
-    initialize_global_map(rospy.wait_for_message('/map', PointCloud2)) #global_map
+    node.get_logger().warning('Waiting for global map......')
+    map_msg = wait_for_message('/map', PointCloud2, timeout=None)
+    if map_msg is None:
+        node.get_logger().error('Did not receive global map')
+        rclpy.shutdown()
+        raise SystemExit(1)
+    initialize_global_map(map_msg)
 
     # 初始化
     while not initialized:
         print("等待初始位姿..........")
-        rospy.logwarn('Waiting for initial pose....')
+        node.get_logger().warning('Waiting for initial pose....')
 
         # 等待初始位姿
-        pose_msg = rospy.wait_for_message('/initialpose', PoseWithCovarianceStamped)
+        pose_msg = wait_for_message('/initialpose', PoseWithCovarianceStamped, timeout=None)
+        if pose_msg is None:
+            node.get_logger().warning('Initial pose wait timed out')
+            time.sleep(0.1)
+            continue
         initial_pose = pose_to_mat(pose_msg)
         print("initial_pose变换矩阵")
         print(initial_pose)
         if cur_scan:
             initialized = global_localization(initial_pose)
         else:
-            rospy.logwarn('First scan not received!!!!!')
+            node.get_logger().warning('First scan not received!!!!!')
         print(initialized)
         print("未接受到初始位姿..........")
-    rospy.loginfo('')
-    rospy.loginfo('Initialize successfully!!!!!!')
-    rospy.loginfo('')
+    node.get_logger().info('')
+    node.get_logger().info('Initialize successfully!!!!!!')
+    node.get_logger().info('')
     # 开始定期全局定位
-    thread.start_new_thread(thread_localization, ())
+    threading.Thread(target=thread_localization, daemon=True).start()
 
-    rospy.spin()
+    try:
+        rclpy.spin(node)
+    except KeyboardInterrupt:
+        pass
+    node.destroy_node()
+    rclpy.shutdown()

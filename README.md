@@ -84,10 +84,27 @@ Clone the repository and catkin_make:
 
 ## 4. Run Localization
 ### 4.1 Sample Dataset
-
-Demo rosbag in a large underground garage: 
 [Google Drive](https://drive.google.com/file/d/15ZZAcz84mDxaWviwFPuALpkoeK-KAh-4/view?usp=sharing) | [Baidu Pan (Code: ne8d)](https://pan.baidu.com/s/1ceBiIAUqHa1vY3QjWpxwNA);
 
+    This repository was originally for ROS 1 (catkin). A partial ROS 2 port is provided in this branch:
+
+    - All Python nodes under `scripts/` have been ported to ROS 2 (rclpy).
+    - The C++ sources under `src/` are still ROS 1 (roscpp) and require a manual port to rclcpp. A minimal C++ skeleton node has been added as `src/laser_mapping_node.cpp` to validate ament builds.
+
+    To build with ROS 2 (experimental partial port):
+
+    ```
+    # in a ROS 2 workspace
+    cd ~/ros2_ws/src
+    git clone <this-repo-path>
+    cd ~/ros2_ws
+    colcon build --packages-select fast_lio_localization
+    source install/setup.bash
+    ```
+
+    Notes:
+    - Ensure dependencies are available in your ROS 2 environment: rclcpp, tf2_ros, ros_numpy, tf_transformations, open3d, ros2 versions of pcl_conversions, etc.
+    - The C++ mapping/laserMapping implementation is large and still uses ROS 1 APIs; porting it is a sizeable task. The CMakeLists contains comments and a placeholder target to help incremental porting.
 Corresponding map: [Google Drive](https://drive.google.com/file/d/1X_mhPlSCNj-1erp_DStCQZfkY7l4w7j8/view?usp=sharing) | [Baidu Pan (Code: kw6f)](https://pan.baidu.com/s/1Yw4vY3kEK8x2g-AsBi6VCw)
 
 The map can be built using LIO-SAM or FAST-LIO-SLAM.

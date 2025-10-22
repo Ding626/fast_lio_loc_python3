@@ -1,4 +1,8 @@
-build
+# 忽略目录及其所有内容
+log/
+install/
+build/
+
 Log/*.png
 Log/*.txt
 Log/*.csv

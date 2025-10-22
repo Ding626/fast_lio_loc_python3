@@ -1,15 +1,22 @@
+// Provide a fallback for ROOT_DIR when not defined by build system
+#ifndef ROOT_DIR
+#define ROOT_DIR "./"
+#endif
+#define DEBUG_FILE_DIR(name)     (string(string(ROOT_DIR) + "Log/"+ name))
 #ifndef COMMON_LIB_H
 #define COMMON_LIB_H
 
 #include <so3_math.h>
-#include <Eigen/Eigen>
+#include <Eigen/Core>
+#include <Eigen/Geometry>
 #include <pcl/point_types.h>
 #include <pcl/point_cloud.h>
-#include <fast_lio_localization/Pose6D.h>
-#include <sensor_msgs/Imu.h>
-#include <nav_msgs/Odometry.h>
-#include <tf/transform_broadcaster.h>
-#include <eigen_conversions/eigen_msg.h>
+#include <fast_lio_localization/msg/pose6_d.hpp>
+// #include </home/ding/code/SLAM_ws/build/fast_lio_localization/rosidl_generator_cpp/fast_lio_localization/msg/pose6_d.hpp>
+#include <sensor_msgs/msg/imu.hpp>
+#include <nav_msgs/msg/odometry.hpp>
+#include <tf2_ros/transform_broadcaster.h>
+#include <Eigen/Core>
 
 using namespace std;
 using namespace Eigen;
@@ -33,7 +40,7 @@ using namespace Eigen;
 #define STD_VEC_FROM_EIGEN(mat)  vector<decltype(mat)::Scalar> (mat.data(), mat.data() + mat.rows() * mat.cols())
 #define DEBUG_FILE_DIR(name)     (string(string(ROOT_DIR) + "Log/"+ name))
 
-typedef fast_lio_localization::Pose6D Pose6D;
+typedef fast_lio_localization::msg::Pose6D Pose6D;
 typedef pcl::PointXYZINormal PointType;
 typedef pcl::PointCloud<PointType> PointCloudXYZI;
 typedef vector<PointType, Eigen::aligned_allocator<PointType>>  PointVector;
@@ -60,8 +67,9 @@ struct MeasureGroup     // Lidar data and imu dates for the curent process
         this->lidar.reset(new PointCloudXYZI());
     };
     double lidar_beg_time;
-    PointCloudXYZI::Ptr lidar;
-    deque<sensor_msgs::Imu::ConstPtr> imu;
+        PointCloudXYZI::Ptr lidar;
+        // use ROS2 message typedefs (ConstSharedPtr)
+        deque<sensor_msgs::msg::Imu::ConstSharedPtr> imu;
 };
 
 struct StatesGroup

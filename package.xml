@@ -1,47 +1,71 @@
 <?xml version="1.0"?>
-<package>
+<package format="3">
   <name>fast_lio_localization</name>
-  <version>0.0.0</version>
-
-  <description>
-    This is a modified version of LOAM which is original algorithm
-    is described in the following paper:
-    J. Zhang and S. Singh. LOAM: Lidar Odometry and Mapping in Real-time.
-      Robotics: Science and Systems Conference (RSS). Berkeley, CA, July 2014.
-  </description>
-
+  <version>0.0.1</version>
+  <description>ROS 2 port (partial) of fast_lio_localization. Python nodes converted to rclpy. C++ nodes still need porting to rclcpp.</description>
   <maintainer email="dev@livoxtech.com">claydergc</maintainer>
+  <license>BSD-3-Clause</license>
 
-  <license>BSD</license>
+  <buildtool_depend>ament_cmake</buildtool_depend>
+  <build_depend>rosidl_default_generators</build_depend>
+  <exec_depend>rosidl_default_runtime</exec_depend>
 
-  <author email="zhangji@cmu.edu">Ji Zhang</author>
-  
-  <buildtool_depend>catkin</buildtool_depend>
-  <build_depend>geometry_msgs</build_depend>
-  <build_depend>nav_msgs</build_depend>
-  <build_depend>roscpp</build_depend>
-  <build_depend>rospy</build_depend>
+  <!-- build and run dependencies -->
+  <build_depend>rclcpp</build_depend>
+  <exec_depend>rclcpp</exec_depend>
+
   <build_depend>std_msgs</build_depend>
+  <exec_depend>std_msgs</exec_depend>
+
+  <build_depend>geometry_msgs</build_depend>
+  <exec_depend>geometry_msgs</exec_depend>
+
+  <build_depend>nav_msgs</build_depend>
+  <exec_depend>nav_msgs</exec_depend>
+
   <build_depend>sensor_msgs</build_depend>
-  <build_depend>tf</build_depend>
-  <build_depend>pcl_ros</build_depend>
-  <build_depend>livox_ros_driver</build_depend>
-  <build_depend>message_generation</build_depend>
+  <exec_depend>sensor_msgs</exec_depend>
 
-  <run_depend>geometry_msgs</run_depend>
-  <run_depend>nav_msgs</run_depend>
-  <run_depend>sensor_msgs</run_depend>
-  <run_depend>roscpp</run_depend>
-  <run_depend>rospy</run_depend>
-  <run_depend>std_msgs</run_depend>
-  <run_depend>tf</run_depend>
-  <run_depend>pcl_ros</run_depend>
-  <run_depend>livox_ros_driver</run_depend>
-  <run_depend>message_runtime</run_depend>
+  <build_depend>visualization_msgs</build_depend>
+  <exec_depend>visualization_msgs</exec_depend>
 
-  <test_depend>rostest</test_depend>
-  <test_depend>rosbag</test_depend>
+  <build_depend>tf2</build_depend>
+  <exec_depend>tf2</exec_depend>
+
+  <build_depend>tf2_ros</build_depend>
+  <exec_depend>tf2_ros</exec_depend>
+
+  <build_depend>tf2_geometry_msgs</build_depend>
+  <exec_depend>tf2_geometry_msgs</exec_depend>
+
+  <build_depend>tf2_geometry_msgs</build_depend>
+  <exec_depend>tf2_geometry_msgs</exec_depend>
+
+  <build_depend>pcl_conversions</build_depend>
+  <exec_depend>pcl_conversions</exec_depend>
+
+  <build_depend>pcl_msgs</build_depend>
+  <exec_depend>pcl_msgs</exec_depend>
+
+  <build_depend>eigen3_cmake_module</build_depend>
+  <exec_depend>eigen3_cmake_module</exec_depend>
+
+  <!-- Use system libeigen3-dev instead of eigen_conversions -->
+
+  <!-- Optional / runtime python deps (install into environment) -->
+  <build_depend>python3</build_depend>
+  <exec_depend>python3</exec_depend>
+  <exec_depend>ros_numpy</exec_depend>
+  <exec_depend>tf_transformations</exec_depend>
+
+  <!-- runtime deps for TF2 geometry conversions -->
+  <exec_depend>tf2_geometry_msgs</exec_depend>
+
+  <test_depend>ament_lint_auto</test_depend>
+  <test_depend>ament_lint_common</test_depend>
 
   <export>
+    <!-- C++ nodes still need porting to ROS 2. See CMakeLists.txt comments. -->
+    <member_of_group>rosidl_interface_packages</member_of_group>
   </export>
 </package>
