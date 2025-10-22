@@ -19,37 +19,16 @@ import tf.transformations
 global_map = None
 initialized = False
 T_map_to_odom = np.eye(4)
-T_map_to_odom_last = np.eye(4)
 cur_odom = None
 cur_scan = None
 
 
 def pose_to_mat(pose_msg):
-    print("pose_to_mat..................")
-    # defensive: ensure pose_msg has the expected structure
-    if pose_msg is None:
-        rospy.logwarn('pose_to_mat received None pose_msg')
-        return np.eye(4)
-
-    # pose_msg can be either PoseWithCovarianceStamped or Odometry in this repo
-    # try to access .pose.pose, otherwise try to handle Pose directly
-    try:
-        pos = pose_msg.pose.pose.position
-        ori = pose_msg.pose.pose.orientation
-    except Exception:
-        try:
-            # maybe a Pose (not stamped)
-            pos = pose_msg.position
-            ori = pose_msg.orientation
-        except Exception as e:
-            rospy.logerr('pose_to_mat: unexpected pose_msg type: %s', e)
-            return np.eye(4)
-
     return np.matmul(
-        tf.listener.xyz_to_mat44(pos),
-        tf.listener.xyzw_to_mat44(ori),
+        tf.listener.xyz_to_mat44(pose_msg.pose.pose.position),
+        tf.listener.xyzw_to_mat44(pose_msg.pose.pose.orientation),
     )
-  
+
 
 def msg_to_array(pc_msg):
     pc_array = ros_numpy.numpify(pc_msg)
@@ -61,26 +40,11 @@ def msg_to_array(pc_msg):
 
 
 def registration_at_scale(pc_scan, pc_map, initial, scale):
-    scan_ds = voxel_down_sample(pc_scan, SCAN_VOXEL_SIZE * scale)
-    map_ds = voxel_down_sample(pc_map, MAP_VOXEL_SIZE * scale)
-
-    # Open3D API changed between versions: registration moved under pipelines.registration
-    try:
-        reg_module = o3d.registration
-        Estimation = reg_module.TransformationEstimationPointToPoint
-        Criteria = reg_module.ICPConvergenceCriteria
-        registration_icp = reg_module.registration_icp
-    except Exception:
-        reg_module = o3d.pipelines.registration
-        Estimation = reg_module.TransformationEstimationPointToPoint
-        Criteria = reg_module.ICPConvergenceCriteria
-        registration_icp = reg_module.registration_icp
-
-    result_icp = registration_icp(
-        scan_ds, map_ds,
+    result_icp = o3d.registration.registration_icp(
+        voxel_down_sample(pc_scan, SCAN_VOXEL_SIZE * scale), voxel_down_sample(pc_map, MAP_VOXEL_SIZE * scale),
         1.0 * scale, initial,
-        Estimation(),
-        Criteria(max_iteration=20)
+        o3d.registration.TransformationEstimationPointToPoint(),
+        o3d.registration.ICPConvergenceCriteria(max_iteration=20)
     )
 
     return result_icp.transformation, result_icp.fitness
@@ -114,28 +78,9 @@ def publish_point_cloud(publisher, header, pc):
 
 def crop_global_map_in_FOV(global_map, pose_estimation, cur_odom):
     # 当前scan原点的位姿
-    print("裁剪global map")
-    # print("cur_odom")
-    # print(cur_odom)
-    # defensive: ensure cur_odom is present and has header
-    if cur_odom is None:
-        rospy.logwarn('crop_global_map_in_FOV: cur_odom is None, returning empty submap')
-        empty_pc = o3d.geometry.PointCloud()
-        empty_pc.points = o3d.utility.Vector3dVector(np.zeros((0, 3)))
-        return empty_pc
-
-    # pose_to_mat will convert Odometry->matrix
     T_odom_to_base_link = pose_to_mat(cur_odom)
-    print("T_odom_to_base_link")
-    print(T_odom_to_base_link)
-    print("pose_estimation")
-    print(pose_estimation)
     T_map_to_base_link = np.matmul(pose_estimation, T_odom_to_base_link)
-    print("T_map_to_base_link")
-    print(T_map_to_base_link)
     T_base_link_to_map = inverse_se3(T_map_to_base_link)
-    print("T_base_link_to_map")
-    print(T_base_link_to_map)
 
     # 把地图转换到lidar系下
     global_map_in_map = np.array(global_map.points)
@@ -146,10 +91,8 @@ def crop_global_map_in_FOV(global_map, pose_estimation, cur_odom):
     if FOV > 3.14:
         # 环状lidar 仅过滤距离
         indices = np.where(
-            (np.abs(global_map_in_base_link[:, 0]) < FOV_FAR) & 
-            (np.abs(global_map_in_base_link[:, 1]) < FOV_FAR)
-            #&
-            #(np.abs(np.arctan2(global_map_in_base_link[:, 1], global_map_in_base_link[:, 0])) < FOV / 2.0)
+            (global_map_in_base_link[:, 0] < FOV_FAR) &
+            (np.abs(np.arctan2(global_map_in_base_link[:, 1], global_map_in_base_link[:, 0])) < FOV / 2.0)
         )
     else:
         # 非环状lidar 保前视范围
@@ -184,69 +127,26 @@ def global_localization(pose_estimation):
     global_map_in_FOV = crop_global_map_in_FOV(global_map, pose_estimation, cur_odom)
 
     # 粗配准
-    print("粗配准...............")
-    print("scan_tobe_mapped")
-    print(scan_tobe_mapped)
-    print("global_map_in_FOV")
-    print(global_map_in_FOV)
-    print("pose_estimation")
-    print(pose_estimation)
-    # Debug prints: show global_map, pose_estimation and cur_odom
-    print("DEBUG: global_map info")
-    try:
-        gm_pts = np.array(global_map.points)
-        print("global_map number of points:", gm_pts.shape[0])
-        print("global_map first 5 points:\n", gm_pts[:5])
-    except Exception as e:
-        print("Could not print global_map:", e)
-
-    print("DEBUG: pose_estimation")
-    try:
-        print(pose_estimation)
-    except Exception as e:
-        print("Could not print pose_estimation:", e)
-
-    print("DEBUG: cur_odom")
-    try:
-        print(cur_odom)
-    except Exception as e:
-        print("Could not print cur_odom:", e)
     transformation, _ = registration_at_scale(scan_tobe_mapped, global_map_in_FOV, initial=pose_estimation, scale=5)
-    #scan_tobe_mapped来自/cloud_registered，是将采集的雷达数据转换到odom坐标系
-    #
-    print("transformation")
-    print(transformation)
-    
+
     # 精配准
-    transformation, fitness = registration_at_scale(scan_tobe_mapped, global_map_in_FOV, initial=transformation, scale=1)
-    print("精配准..............")
-    print("transformation")
-    print(transformation)
+    transformation, fitness = registration_at_scale(scan_tobe_mapped, global_map_in_FOV, initial=transformation,
+                                                    scale=1)
     toc = time.time()
-    print("匹配中......................")
     rospy.loginfo('Time: {}'.format(toc - tic))
     rospy.loginfo('')
-    print("fitness值为")
-    print(fitness)
+
     # 当全局定位成功时才更新map2odom
     if fitness > LOCALIZATION_TH:
         # T_map_to_odom = np.matmul(transformation, pose_estimation)
         T_map_to_odom = transformation
 
-        # if(T_map_to_odom_last is None):
-        #     T_map_to_odom_last = T_map_to_odom
-        # if(abs(T_map_to_odom[0][3] - T_map_to_odom_last[0][3]) > 0.1 and abs(T_map_to_odom[1][3] - T_map_to_odom_last[1][3]) > 0.1):
-        #     T_map_to_odom = T_map_to_odom_last
-        #     print("*******采用前一个数据************")
-        # T_map_to_odom_last = T_map_to_odom
-        
         # 发布map_to_odom
         map_to_odom = Odometry()
         xyz = tf.transformations.translation_from_matrix(T_map_to_odom)
         quat = tf.transformations.quaternion_from_matrix(T_map_to_odom)
         map_to_odom.pose.pose = Pose(Point(*xyz), Quaternion(*quat))
-        # map_to_odom.header.stamp = cur_odom.header.stamp
-        map_to_odom.header.stamp = lidar_time
+        map_to_odom.header.stamp = cur_odom.header.stamp
         map_to_odom.header.frame_id = 'map'
         pub_map_to_odom.publish(map_to_odom)
         return True
@@ -282,11 +182,9 @@ def cb_save_cur_odom(odom_msg):
 
 def cb_save_cur_scan(pc_msg):
     global cur_scan
-    global lidar_time
-    lidar_time = pc_msg.header.stamp
     # 注意这里fastlio直接将scan转到odom系下了 不是lidar局部系
     pc_msg.header.frame_id = 'camera_init'
-    # pc_msg.header.stamp = rospy.Time().now()
+    pc_msg.header.stamp = rospy.Time().now()
     pub_pc_in_map.publish(pc_msg)
 
     # 转换为pcd
@@ -310,8 +208,7 @@ def thread_localization():
 
 
 if __name__ == '__main__':
-    global lidar_time 
-    MAP_VOXEL_SIZE = 0.1
+    MAP_VOXEL_SIZE = 0.4
     SCAN_VOXEL_SIZE = 0.1
 
     # Global localization frequency (HZ)
@@ -319,51 +216,43 @@ if __name__ == '__main__':
 
     # The threshold of global localization,
     # only those scan2map-matching with higher fitness than LOCALIZATION_TH will be taken
-    # LOCALIZATION_TH = 0.95
-    LOCALIZATION_TH = 0.91
+    LOCALIZATION_TH = 0.95
 
     # FOV(rad), modify this according to your LiDAR type
-    # FOV = 1.6
-    FOV = 3.15
+    FOV = 1.6
 
     # The farthest distance(meters) within FOV
-    # FOV_FAR = 150
-    FOV_FAR = 30
+    FOV_FAR = 150
 
     rospy.init_node('fast_lio_localization')
     rospy.loginfo('Localization Node Inited...')
 
     # publisher
-    pub_pc_in_map = rospy.Publisher('/cur_scan_in_map', PointCloud2, queue_size=1)#发布的是/cloud_registered(小车雷达点云）将其转换到odom坐标系下
-    pub_submap = rospy.Publisher('/submap', PointCloud2, queue_size=1) #裁剪后的map
+    pub_pc_in_map = rospy.Publisher('/cur_scan_in_map', PointCloud2, queue_size=1)
+    pub_submap = rospy.Publisher('/submap', PointCloud2, queue_size=1)
     pub_map_to_odom = rospy.Publisher('/map_to_odom', Odometry, queue_size=1)
-
 
     # rospy.Subscriber('/cloud_registered', PointCloud2, cb_save_cur_scan, queue_size=1)
     # rospy.Subscriber('/Odometry', Odometry, cb_save_cur_odom, queue_size=1)
-    rospy.Subscriber('/cloud_registered', PointCloud2, cb_save_cur_scan, queue_size=1)#小车雷达扫描的点云
-    rospy.Subscriber('/t265/odom/sample', Odometry, cb_save_cur_odom, queue_size=1)
+    rospy.Subscriber('/cloud_registered', PointCloud2, cb_save_cur_scan, queue_size=1)
+    rospy.Subscriber('/odom', Odometry, cb_save_cur_odom, queue_size=1)
 
     # 初始化全局地图
     rospy.logwarn('Waiting for global map......')
-    initialize_global_map(rospy.wait_for_message('/map', PointCloud2)) #global_map
+    initialize_global_map(rospy.wait_for_message('/map', PointCloud2))
 
     # 初始化
     while not initialized:
-        print("等待初始位姿..........")
         rospy.logwarn('Waiting for initial pose....')
 
         # 等待初始位姿
         pose_msg = rospy.wait_for_message('/initialpose', PoseWithCovarianceStamped)
         initial_pose = pose_to_mat(pose_msg)
-        print("initial_pose变换矩阵")
-        print(initial_pose)
         if cur_scan:
             initialized = global_localization(initial_pose)
         else:
             rospy.logwarn('First scan not received!!!!!')
-        print(initialized)
-        print("未接受到初始位姿..........")
+
     rospy.loginfo('')
     rospy.loginfo('Initialize successfully!!!!!!')
     rospy.loginfo('')

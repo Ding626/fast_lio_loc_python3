@@ -13,10 +13,9 @@ import tf.transformations
 from geometry_msgs.msg import Pose, Point, Quaternion
 from nav_msgs.msg import Odometry
 
-
 cur_odom_to_baselink = None
 cur_map_to_odom = None
-time_header = rospy.Time()
+
 
 def pose_to_mat(pose_msg):
     return np.matmul(
@@ -27,7 +26,7 @@ def pose_to_mat(pose_msg):
 
 def transform_fusion():
     global cur_odom_to_baselink, cur_map_to_odom
-    
+
     br = tf.TransformBroadcaster()
     while True:
         time.sleep(1 / FREQ_PUB_LOCALIZATION)
@@ -42,11 +41,10 @@ def transform_fusion():
         br.sendTransform(tf.transformations.translation_from_matrix(T_map_to_odom),
                          tf.transformations.quaternion_from_matrix(T_map_to_odom),
                          rospy.Time.now(),
-                         'camera_init', 'map' )
+                         'camera_init', 'map')
         if cur_odom is not None:
             # 发布全局定位的odometry
             localization = Odometry()
-            localization_time = Odometry()
             T_odom_to_base_link = pose_to_mat(cur_odom)
             # 这里T_map_to_odom短时间内变化缓慢 暂时不考虑与T_odom_to_base_link时间同步
             T_map_to_base_link = np.matmul(T_map_to_odom, T_odom_to_base_link)
@@ -57,25 +55,9 @@ def transform_fusion():
 
             localization.header.stamp = cur_odom.header.stamp
             localization.header.frame_id = 'map'
-            # localization.child_frame_id = 'body'
-            localization.child_frame_id = 'base_footprint'
+            localization.child_frame_id = 'body'
             # rospy.loginfo_throttle(1, '{}'.format(np.matmul(T_map_to_odom, T_odom_to_base_link)))
             pub_localization.publish(localization)
-            ###########
-            localization_time.pose.pose = Pose(Point(*xyz), Quaternion(*quat))
-            localization_time.twist = cur_odom.twist
-            global time_header
-            localization_time.header.stamp = cur_odom.header.stamp
-            localization_time.header.frame_id = 'map_1'
-            # localization.child_frame_id = 'body'
-            localization_time.child_frame_id = 'base_footprint'
-            # rospy.loginfo_throttle(1, '{}'.format(np.matmul(T_map_to_odom, T_odom_to_base_link)))
-            global count
-            count = count + 1
-            if count == 5:
-                pub_localization_time.publish(localization_time)
-                count = 0
-
 
 
 def cb_save_cur_odom(odom_msg):
@@ -85,29 +67,23 @@ def cb_save_cur_odom(odom_msg):
 
 def cb_save_map_to_odom(odom_msg):
     global cur_map_to_odom
-    global time_header
-    
     cur_map_to_odom = odom_msg
-    time_header     = odom_msg.header.stamp
 
 
 if __name__ == '__main__':
     # tf and localization publishing frequency (HZ)
-    global count 
-    count = 0
     FREQ_PUB_LOCALIZATION = 50
 
     rospy.init_node('transform_fusion')
     rospy.loginfo('Transform Fusion Node Inited...')
 
     # rospy.Subscriber('/Odometry', Odometry, cb_save_cur_odom, queue_size=1)
-    rospy.Subscriber('/t265/odom/sample', Odometry, cb_save_cur_odom, queue_size=1)
+    rospy.Subscriber('/odom', Odometry, cb_save_cur_odom, queue_size=1)
     rospy.Subscriber('/map_to_odom', Odometry, cb_save_map_to_odom, queue_size=1)
 
     pub_localization = rospy.Publisher('/localization', Odometry, queue_size=1)
-    pub_localization_time = rospy.Publisher('/localization_time', Odometry, queue_size=50)
-    
-    # 发布定位消息localization_time
+
+    # 发布定位消息
     thread.start_new_thread(transform_fusion, ())
 
     rospy.spin()

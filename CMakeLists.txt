@@ -51,13 +51,13 @@ find_package(catkin REQUIRED COMPONENTS
   std_msgs
   pcl_ros
   tf
-  livox_ros_driver
+  #livox_ros_driver
   message_generation
   eigen_conversions
 )
 
 find_package(Eigen3 REQUIRED)
-find_package(PCL 1.8 REQUIRED)
+find_package(PCL 1.7 REQUIRED)
 
 message(Eigen: ${EIGEN3_INCLUDE_DIR})
 
@@ -66,7 +66,9 @@ include_directories(
   ${EIGEN3_INCLUDE_DIR}
   ${PCL_INCLUDE_DIRS}
   ${PYTHON_INCLUDE_DIRS}
-  include)
+  include
+  /usr/local/include/
+)
 
 add_message_files(
   FILES

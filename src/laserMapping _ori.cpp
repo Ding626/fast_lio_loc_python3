@@ -43,7 +43,6 @@
 #include <Python.h>
 #include <so3_math.h>
 #include <ros/ros.h>
-#include <ros/time.h>
 #include <Eigen/Core>
 #include <Eigen/Geometry>
 #include "IMU_Processing.hpp"
@@ -62,13 +61,12 @@
 // #include <livox_ros_driver/CustomMsg.h>
 #include "preprocess.h"
 #include <ikd-Tree/ikd_Tree.h>
-#include <pcl/filters/passthrough.h>
 
 #define INIT_TIME           (0.1)
 #define LASER_POINT_COV     (0.001)
 #define MAXN                (720000)
 #define PUBFRAME_PERIOD     (20)
-ros::Time lidar_time;
+
 /*** Time Log Variables ***/
 double kdtree_incremental_time = 0.0, kdtree_search_time = 0.0, kdtree_delete_time = 0.0;
 double T1[MAXN], s_plot[MAXN], s_plot2[MAXN], s_plot3[MAXN], s_plot4[MAXN], s_plot5[MAXN], s_plot6[MAXN], s_plot7[MAXN], s_plot8[MAXN], s_plot9[MAXN], s_plot10[MAXN], s_plot11[MAXN];
@@ -130,7 +128,7 @@ M3D Lidar_R_wrt_IMU(Eye3d);
 
 /*** EKF inputs and output ***/
 MeasureGroup Measures;
-// esekfom::esekf<state_ikfom, 12, input_ikfom> kf;
+esekfom::esekf<state_ikfom, 12, input_ikfom> kf;
 state_ikfom state_point;
 vect3 pos_lid;
 
@@ -140,9 +138,6 @@ geometry_msgs::Quaternion geoQuat;
 geometry_msgs::PoseStamped msg_body_pose;
 shared_ptr<Preprocess> p_pre(new Preprocess());
 shared_ptr<ImuProcess> p_imu(new ImuProcess());
-ros::Publisher pubCloudScan;
-pcl::PointCloud<pcl::PointXYZ>::Ptr final_Cloud_X (new pcl::PointCloud<pcl::PointXYZ>);
-pcl::PointCloud<pcl::PointXYZ>::Ptr final_Cloud_Y(new pcl::PointCloud<pcl::PointXYZ>);
 
 void SigHandle(int sig)
 {
@@ -229,6 +224,25 @@ void RGBpointBodyToWorld(PointType const * const pi, PointType * const po, const
     po->y = p_global(1);
     po->z = p_global(2);
     po->intensity = pi->intensity;
+    // tf::TransformListener listener;
+    // geometry_msgs::PoseStamped pose_odom;
+    // pose_odom.pose.position.x = pi->x;
+    // pose_odom.pose.position.y = pi->y;
+    // pose_odom.pose.position.z = pi->z;
+    // pose_odom.pose.orientation.x = 0;
+    // pose_odom.pose.orientation.y = 0;
+    // pose_odom.pose.orientation.z = 0;
+    // pose_odom.pose.orientation.w = 1;
+    // try{
+    //     listener.transformPose("camera_init", ros::Time(0), pose_odom, "base_footprint", pose_odom);
+    // }
+    // catch(tf::TransformException &ex){
+    //     ROS_ERROR("%s",ex.what());
+    // }
+    // po->x = pose_odom.pose.position.x;
+    // po->y = pose_odom.pose.position.y;
+    // po->z = pose_odom.pose.position.z;
+    // po->intensity = pi->intensity;
 }
 
 void RGBpointBodyLidarToIMU(PointType const * const pi, PointType * const po)
@@ -301,7 +315,7 @@ void lasermap_fov_segment()
 
 void standard_pcl_cbk(const sensor_msgs::PointCloud2::ConstPtr &msg) 
 {   
-    lidar_time = msg->header.stamp;
+    // cout<<"standard_pcl_cbk"<<endl;
     mtx_buffer.lock();
     scan_count ++;
     double preprocess_start_time = omp_get_wtime();
@@ -310,27 +324,6 @@ void standard_pcl_cbk(const sensor_msgs::PointCloud2::ConstPtr &msg)
         ROS_ERROR("lidar loop back, clear buffer");
         lidar_buffer.clear();
     }
-
-    //publish原始点云
-    pcl::PassThrough<pcl::PointXYZ> pass;//创建直通滤波器对象
-    pcl::PointCloud<pcl::PointXYZ>::Ptr pl_scan (new pcl::PointCloud<pcl::PointXYZ>);
-    pcl::fromROSMsg(*msg, *pl_scan);
-    pass.setInputCloud(pl_scan);//设置输入的点云
-    pass.setFilterFieldName("x");//设置过滤时所需要点云类型为x字段
-    pass.setFilterLimits(0, 12);//设置在过滤字段的范围
-    pass.setFilterLimitsNegative(false);//设置保留还是过滤掉字段范围内的点，设置为true表示过滤掉字段范围内的点
-    pass.filter(*final_Cloud_X);//执行滤波
-
-    pass.setInputCloud(final_Cloud_X);//设置输入的点云
-    pass.setFilterFieldName("y");//设置过滤时所需要点云类型为y字段
-    pass.setFilterLimits(-2, 2);//设置在过滤字段的范围
-    pass.setFilterLimitsNegative(false);//设置保留还是过滤掉字段范围内的点，设置为true表示过滤掉字段范围内的点
-    pass.filter(*final_Cloud_Y);//执行滤波
-    sensor_msgs::PointCloud2 scanCloudmsg;
-    pcl::toROSMsg(*final_Cloud_Y, scanCloudmsg);
-    scanCloudmsg.header.stamp = msg->header.stamp;
-    pubCloudScan.publish(scanCloudmsg);
-
 
     PointCloudXYZI::Ptr  ptr(new PointCloudXYZI());
     p_pre->process(msg, ptr);
@@ -379,6 +372,7 @@ bool   timediff_set_flg = false;
 
 void imu_cbk(const sensor_msgs::Imu::ConstPtr &msg_in) 
 {   
+    // cout<<"Enter imu_cbk()"<<endl;
     publish_count ++;
     // cout<<"IMU got at: "<<msg_in->header.stamp.toSec()<<endl;
     sensor_msgs::Imu::Ptr msg(new sensor_msgs::Imu(*msg_in));
@@ -400,14 +394,20 @@ void imu_cbk(const sensor_msgs::Imu::ConstPtr &msg_in)
     }
 
     last_timestamp_imu = timestamp;
+    // cout<<"msgvalue........."<<msg<<endl;
     imu_buffer.push_back(msg);
+    // cout<<"imu_buffer...."<<imu_buffer.empty()<<endl;
     mtx_buffer.unlock();
     sig_buffer.notify_all();
 }
 
 bool sync_packages(MeasureGroup &meas)
 {   
-    if (lidar_buffer.empty() /*|| imu_buffer.empty()*/) { //11111111111111111111111111111
+    // lidar_buffer.empty() 为0
+    // imu_buffer.empty() 为0
+    // cout<<"imu_buffer"<<imu_buffer.empty()<<endl;
+    // cout<<"lidar_buffer"<<lidar_buffer.empty()<<endl;
+    if (lidar_buffer.empty() || imu_buffer.empty()) {
         return false;
     }
 
@@ -425,25 +425,27 @@ bool sync_packages(MeasureGroup &meas)
         lidar_pushed = true;
     }
 
-    // if (last_timestamp_imu < lidar_end_time)//11111111111111
-    // {
-    //     return false;
-    // }
+    if (last_timestamp_imu < lidar_end_time)
+    {
+        return false;
+    }
+    
 
     /*** push imu data, and pop from imu buffer ***/
-    // double imu_time = imu_buffer.front()->header.stamp.toSec();//1111111111111111111111
-    // meas.imu.clear();
-    // while ((!imu_buffer.empty()) && (imu_time < lidar_end_time))
-    // {
-    //     imu_time = imu_buffer.front()->header.stamp.toSec();
-    //     if(imu_time > lidar_end_time) break;
-    //     meas.imu.push_back(imu_buffer.front());
-    //     imu_buffer.pop_front();
-    // }
+    double imu_time = imu_buffer.front()->header.stamp.toSec();
+    meas.imu.clear();
+    while ((!imu_buffer.empty()) && (imu_time < lidar_end_time))
+    {
+        imu_time = imu_buffer.front()->header.stamp.toSec();
+        if(imu_time > lidar_end_time) break;
+        meas.imu.push_back(imu_buffer.front());
+        imu_buffer.pop_front();
+    }
 
     lidar_buffer.pop_front();
     time_buffer.pop_front();
     lidar_pushed = false;
+    // cout<<"sync_packages_true........."<<endl;
     return true;
 }
 
@@ -505,34 +507,15 @@ void publish_frame_world(const ros::Publisher & pubLaserCloudFull)
     tf::StampedTransform transform;
     // cout<<"scan_pub_en..........value:"<<scan_pub_en<<endl;
     if(scan_pub_en)
-    {   //dense_pub_en为1，feats_undistort为未体素化；feats_down_body为体素化
+    {
         PointCloudXYZI::Ptr laserCloudFullRes(dense_pub_en ? feats_undistort : feats_down_body);
         int size = laserCloudFullRes->points.size();
         PointCloudXYZI::Ptr laserCloudWorld( \
                         new PointCloudXYZI(size, 1));
 
-        //publish原始点云
-        // pcl::PassThrough<pcl::PointXYZINormal> pass;//创建直通滤波器对象
-        
-        // pass.setInputCloud(feats_undistort);//设置输入的点云
-        // pass.setFilterFieldName("x");//设置过滤时所需要点云类型为x字段
-        // pass.setFilterLimits(0, 8);//设置在过滤字段的范围
-        // pass.setFilterLimitsNegative(false);//设置保留还是过滤掉字段范围内的点，设置为true表示过滤掉字段范围内的点
-        // pass.filter(*final_Cloud_X);//执行滤波
-
-        // pass.setInputCloud(final_Cloud_X);//设置输入的点云
-        // pass.setFilterFieldName("y");//设置过滤时所需要点云类型为y字段
-        // pass.setFilterLimits(-4, 4);//设置在过滤字段的范围
-        // pass.setFilterLimitsNegative(false);//设置保留还是过滤掉字段范围内的点，设置为true表示过滤掉字段范围内的点
-        // pass.filter(*final_Cloud_Y);//执行滤波
-        // sensor_msgs::PointCloud2 scanCloudmsg;
-        // pcl::toROSMsg(*final_Cloud_Y, scanCloudmsg);
-        // scanCloudmsg.header.stamp = ros::Time().fromSec(lidar_end_time);
-        // pubCloudScan.publish(scanCloudmsg);
-
         try{
-            // listener.lookupTransform("/camera_init","/velodyne", ros::Time(0), transform);
-            listener.lookupTransform("/camera_init","/laser", ros::Time(0), transform);
+            listener.lookupTransform("/camera_init","/base_footprint",
+                               ros::Time(0), transform);
         }
         catch (tf::TransformException &ex) {
             ROS_ERROR("%s",ex.what());
@@ -546,9 +529,9 @@ void publish_frame_world(const ros::Publisher & pubLaserCloudFull)
 
         sensor_msgs::PointCloud2 laserCloudmsg;
         pcl::toROSMsg(*laserCloudWorld, laserCloudmsg);
-        // laserCloudmsg.header.stamp = ros::Time().fromSec(lidar_end_time);
-        laserCloudmsg.header.stamp = lidar_time;
+        laserCloudmsg.header.stamp = ros::Time().fromSec(lidar_end_time);
         laserCloudmsg.header.frame_id = "camera_init";
+        //laserCloudmsg.header.frame_id = "velodyne";
         pubLaserCloudFull.publish(laserCloudmsg);
         publish_count -= PUBFRAME_PERIOD;
         // cout<<"完成/cloud_registered初始化.................";
@@ -571,25 +554,25 @@ void publish_frame_world(const ros::Publisher & pubLaserCloudFull)
     }
 }
 
-// void publish_frame_body(const ros::Publisher & pubLaserCloudFull_body)
-// {
-//     int size = feats_undistort->points.size();
-//     PointCloudXYZI::Ptr laserCloudIMUBody(new PointCloudXYZI(size, 1));
+void publish_frame_body(const ros::Publisher & pubLaserCloudFull_body)
+{
+    int size = feats_undistort->points.size();
+    PointCloudXYZI::Ptr laserCloudIMUBody(new PointCloudXYZI(size, 1));
 
-//     for (int i = 0; i < size; i++)
-//     {
-//         RGBpointBodyLidarToIMU(&feats_undistort->points[i], \
-//                             &laserCloudIMUBody->points[i]);
-//     }
+    for (int i = 0; i < size; i++)
+    {
+        RGBpointBodyLidarToIMU(&feats_undistort->points[i], \
+                            &laserCloudIMUBody->points[i]);
+    }
 
-//     sensor_msgs::PointCloud2 laserCloudmsg;
-//     pcl::toROSMsg(*laserCloudIMUBody, laserCloudmsg);
-//     laserCloudmsg.header.stamp = ros::Time().fromSec(lidar_end_time);
-//     // laserCloudmsg.header.frame_id = "body";
-//     laserCloudmsg.header.frame_id = "base_footprint";
-//     pubLaserCloudFull_body.publish(laserCloudmsg);
-//     publish_count -= PUBFRAME_PERIOD;
-// }
+    sensor_msgs::PointCloud2 laserCloudmsg;
+    pcl::toROSMsg(*laserCloudIMUBody, laserCloudmsg);
+    laserCloudmsg.header.stamp = ros::Time().fromSec(lidar_end_time);
+    // laserCloudmsg.header.frame_id = "body";
+    laserCloudmsg.header.frame_id = "base_footprint";
+    pubLaserCloudFull_body.publish(laserCloudmsg);
+    publish_count -= PUBFRAME_PERIOD;
+}
 
 // void publish_effect_world(const ros::Publisher & pubLaserCloudEffect)
 // {
@@ -608,15 +591,15 @@ void publish_frame_world(const ros::Publisher & pubLaserCloudFull)
 //     pubLaserCloudEffect.publish(laserCloudFullRes3);
 // }
 
-// void publish_map(const ros::Publisher & pubLaserCloudMap)
-// {
-//     sensor_msgs::PointCloud2 laserCloudMap;
-//     pcl::toROSMsg(*featsFromMap, laserCloudMap);
-//     laserCloudMap.header.stamp = ros::Time().fromSec(lidar_end_time);
-//     laserCloudMap.header.frame_id = "camera_init";
-//     //laserCloudMap.header.frame_id = "velodyne";
-//     pubLaserCloudMap.publish(laserCloudMap);
-// }
+void publish_map(const ros::Publisher & pubLaserCloudMap)
+{
+    sensor_msgs::PointCloud2 laserCloudMap;
+    pcl::toROSMsg(*featsFromMap, laserCloudMap);
+    laserCloudMap.header.stamp = ros::Time().fromSec(lidar_end_time);
+    laserCloudMap.header.frame_id = "camera_init";
+    //laserCloudMap.header.frame_id = "velodyne";
+    pubLaserCloudMap.publish(laserCloudMap);
+}
 
 template<typename T>
 void set_posestamp(T & out)
@@ -631,62 +614,62 @@ void set_posestamp(T & out)
     
 }
 
-// void publish_odometry(const ros::Publisher & pubOdomAftMapped)
-// {
-//     odomAftMapped.header.frame_id = "camera_init";
-//     //odomAftMapped.header.frame_id = "velodyne";
-//     //odomAftMapped.child_frame_id = "body";
-//     odomAftMapped.child_frame_id = "base_footprint";
-// //    odomAftMapped.header.stamp = ros::Time().fromSec(lidar_end_time);// ros::Time().fromSec(lidar_end_time);
-//     odomAftMapped.header.stamp = ros::Time::now();// ros::Time().fromSec(lidar_end_time);
-//     set_posestamp(odomAftMapped.pose);
-//     pubOdomAftMapped.publish(odomAftMapped);
-//     auto P = kf.get_P();
-//     for (int i = 0; i < 6; i ++)
-//     {
-//         int k = i < 3 ? i + 3 : i - 3;
-//         odomAftMapped.pose.covariance[i*6 + 0] = P(k, 3);
-//         odomAftMapped.pose.covariance[i*6 + 1] = P(k, 4);
-//         odomAftMapped.pose.covariance[i*6 + 2] = P(k, 5);
-//         odomAftMapped.pose.covariance[i*6 + 3] = P(k, 0);
-//         odomAftMapped.pose.covariance[i*6 + 4] = P(k, 1);
-//         odomAftMapped.pose.covariance[i*6 + 5] = P(k, 2);
-//     }
+void publish_odometry(const ros::Publisher & pubOdomAftMapped)
+{
+    odomAftMapped.header.frame_id = "camera_init";
+    //odomAftMapped.header.frame_id = "velodyne";
+    //odomAftMapped.child_frame_id = "body";
+    odomAftMapped.child_frame_id = "base_footprint";
+//    odomAftMapped.header.stamp = ros::Time().fromSec(lidar_end_time);// ros::Time().fromSec(lidar_end_time);
+    odomAftMapped.header.stamp = ros::Time::now();// ros::Time().fromSec(lidar_end_time);
+    set_posestamp(odomAftMapped.pose);
+    pubOdomAftMapped.publish(odomAftMapped);
+    auto P = kf.get_P();
+    for (int i = 0; i < 6; i ++)
+    {
+        int k = i < 3 ? i + 3 : i - 3;
+        odomAftMapped.pose.covariance[i*6 + 0] = P(k, 3);
+        odomAftMapped.pose.covariance[i*6 + 1] = P(k, 4);
+        odomAftMapped.pose.covariance[i*6 + 2] = P(k, 5);
+        odomAftMapped.pose.covariance[i*6 + 3] = P(k, 0);
+        odomAftMapped.pose.covariance[i*6 + 4] = P(k, 1);
+        odomAftMapped.pose.covariance[i*6 + 5] = P(k, 2);
+    }
 
-//     static tf::TransformBroadcaster br;
-//     tf::Transform                   transform;
-//     tf::Quaternion                  q;
-//     transform.setOrigin(tf::Vector3(odomAftMapped.pose.pose.position.x, \
-//                                     odomAftMapped.pose.pose.position.y, \
-//                                     odomAftMapped.pose.pose.position.z));
-//     q.setW(odomAftMapped.pose.pose.orientation.w);
-//     q.setX(odomAftMapped.pose.pose.orientation.x);
-//     q.setY(odomAftMapped.pose.pose.orientation.y);
-//     q.setZ(odomAftMapped.pose.pose.orientation.z);
-//     transform.setRotation( q );
-//     // TODO 这里使用当前时间发布tf 否则当livox时间不正确时无法正常tf
-// //    br.sendTransform( tf::StampedTransform( transform, odomAftMapped.header.stamp, "camera_init", "body" ) );
+    static tf::TransformBroadcaster br;
+    tf::Transform                   transform;
+    tf::Quaternion                  q;
+    transform.setOrigin(tf::Vector3(odomAftMapped.pose.pose.position.x, \
+                                    odomAftMapped.pose.pose.position.y, \
+                                    odomAftMapped.pose.pose.position.z));
+    q.setW(odomAftMapped.pose.pose.orientation.w);
+    q.setX(odomAftMapped.pose.pose.orientation.x);
+    q.setY(odomAftMapped.pose.pose.orientation.y);
+    q.setZ(odomAftMapped.pose.pose.orientation.z);
+    transform.setRotation( q );
+    // TODO 这里使用当前时间发布tf 否则当livox时间不正确时无法正常tf
+//    br.sendTransform( tf::StampedTransform( transform, odomAftMapped.header.stamp, "camera_init", "body" ) );
 
-//     // br.sendTransform( tf::StampedTransform( transform, ros::Time::now(), "camera_init", "body" ) );
-//     //br.sendTransform( tf::StampedTransform( transform, ros::Time::now(), "camera_init", "base_footprint" ) );
-// }
+    // br.sendTransform( tf::StampedTransform( transform, ros::Time::now(), "camera_init", "body" ) );
+    //br.sendTransform( tf::StampedTransform( transform, ros::Time::now(), "camera_init", "base_footprint" ) );
+}
 
-// void publish_path(const ros::Publisher pubPath)
-// {
-//     set_posestamp(msg_body_pose);
-//     msg_body_pose.header.stamp = ros::Time().fromSec(lidar_end_time);
-//     // msg_body_pose.header.frame_id = "camera_init";
-//     msg_body_pose.header.frame_id = "camera_init";
+void publish_path(const ros::Publisher pubPath)
+{
+    set_posestamp(msg_body_pose);
+    msg_body_pose.header.stamp = ros::Time().fromSec(lidar_end_time);
+    // msg_body_pose.header.frame_id = "camera_init";
+    msg_body_pose.header.frame_id = "camera_init";
 
-//     /*** if path is too large, the rvis will crash ***/
-//     static int jjj = 0;
-//     jjj++;
-//     if (jjj % 10 == 0) 
-//     {
-//         path.poses.push_back(msg_body_pose);
-//         pubPath.publish(path);
-//     }
-// }
+    /*** if path is too large, the rvis will crash ***/
+    static int jjj = 0;
+    jjj++;
+    if (jjj % 10 == 0) 
+    {
+        path.poses.push_back(msg_body_pose);
+        pubPath.publish(path);
+    }
+}
 
 void h_share_model(state_ikfom &s, esekfom::dyn_share_datastruct<double> &ekfom_data)
 {
@@ -796,7 +779,7 @@ int main(int argc, char** argv)
 {
     ros::init(argc, argv, "laserMapping");
     ros::NodeHandle nh;
-
+    // tf::TransformListener listener;
     nh.param<bool>("publish/scan_publish_en",scan_pub_en,1);
     nh.param<bool>("publish/dense_publish_en",dense_pub_en,1);
     nh.param<bool>("publish/scan_bodyframe_pub_en",scan_body_pub_en,1);
@@ -829,6 +812,7 @@ int main(int argc, char** argv)
     
     path.header.stamp    = ros::Time::now();
     path.header.frame_id ="camera_init";
+    //path.header.frame_id ="velodyne";
 
     /*** variables definition ***/
     int effect_feat_num = 0, frame_num = 0;
@@ -849,15 +833,15 @@ int main(int argc, char** argv)
 
     Lidar_T_wrt_IMU<<VEC_FROM_ARRAY(extrinT);
     Lidar_R_wrt_IMU<<MAT_FROM_ARRAY(extrinR);
-    // p_imu->set_extrinsic(Lidar_T_wrt_IMU, Lidar_R_wrt_IMU);
-    // p_imu->set_gyr_cov(V3D(gyr_cov, gyr_cov, gyr_cov));
-    // p_imu->set_acc_cov(V3D(acc_cov, acc_cov, acc_cov));
-    // p_imu->set_gyr_bias_cov(V3D(b_gyr_cov, b_gyr_cov, b_gyr_cov));
-    // p_imu->set_acc_bias_cov(V3D(b_acc_cov, b_acc_cov, b_acc_cov));
+    p_imu->set_extrinsic(Lidar_T_wrt_IMU, Lidar_R_wrt_IMU);
+    p_imu->set_gyr_cov(V3D(gyr_cov, gyr_cov, gyr_cov));
+    p_imu->set_acc_cov(V3D(acc_cov, acc_cov, acc_cov));
+    p_imu->set_gyr_bias_cov(V3D(b_gyr_cov, b_gyr_cov, b_gyr_cov));
+    p_imu->set_acc_bias_cov(V3D(b_acc_cov, b_acc_cov, b_acc_cov));
 
     double epsi[23] = {0.001};
     fill(epsi, epsi+23, 0.001);
-    // kf.init_dyn_share(get_f, df_dx, df_dw, h_share_model, NUM_MAX_ITERATIONS, epsi);
+    kf.init_dyn_share(get_f, df_dx, df_dw, h_share_model, NUM_MAX_ITERATIONS, epsi);
 
     /*** debug record ***/
     FILE *fp;
@@ -875,23 +859,19 @@ int main(int argc, char** argv)
 
     /*** ROS subscribe initialization ***/
     ros::Subscriber sub_pcl  = nh.subscribe(lid_topic, 200000, standard_pcl_cbk);
-    // ros::Subscriber sub_imu = nh.subscribe(imu_topic, 200000, imu_cbk);
+    ros::Subscriber sub_imu = nh.subscribe(imu_topic, 200000, imu_cbk);
     ros::Publisher pubLaserCloudFull = nh.advertise<sensor_msgs::PointCloud2>
             ("/cloud_registered", 100000);
-
-    pubCloudScan = nh.advertise<sensor_msgs::PointCloud2>
-            ("/cloud_scan", 100000);
-
-    // ros::Publisher pubLaserCloudFull_body = nh.advertise<sensor_msgs::PointCloud2>
-    //         ("/cloud_registered_body", 100000);
-    // ros::Publisher pubLaserCloudEffect = nh.advertise<sensor_msgs::PointCloud2>
-    //         ("/cloud_effected", 100000);
-    // ros::Publisher pubLaserCloudMap = nh.advertise<sensor_msgs::PointCloud2>
-    //         ("/Laser_map", 100000);
-    // ros::Publisher pubOdomAftMapped = nh.advertise<nav_msgs::Odometry> 
-    //         ("/Odometry", 100000);
-    // ros::Publisher pubPath          = nh.advertise<nav_msgs::Path> 
-    //         ("/path", 100000);
+    ros::Publisher pubLaserCloudFull_body = nh.advertise<sensor_msgs::PointCloud2>
+            ("/cloud_registered_body", 100000);
+    ros::Publisher pubLaserCloudEffect = nh.advertise<sensor_msgs::PointCloud2>
+            ("/cloud_effected", 100000);
+    ros::Publisher pubLaserCloudMap = nh.advertise<sensor_msgs::PointCloud2>
+            ("/Laser_map", 100000);
+    ros::Publisher pubOdomAftMapped = nh.advertise<nav_msgs::Odometry> 
+            ("/Odometry", 100000);
+    ros::Publisher pubPath          = nh.advertise<nav_msgs::Path> 
+            ("/path", 100000);
 //------------------------------------------------------------------------------------------------------
     signal(SIGINT, SigHandle);
     ros::Rate rate(5000);
@@ -900,14 +880,16 @@ int main(int argc, char** argv)
     {
         if (flg_exit) break;
         ros::spinOnce();
+        // cout<<"sync_packages(Measures)"<<sync_packages(Measures)<<endl;
         if(sync_packages(Measures)) 
         {
             if (flg_reset)
             {
                 ROS_WARN("reset when rosbag play back");
-                p_imu->Reset();//初始化IMU_Process类，默认false进不去
+                p_imu->Reset();
                 flg_reset = false;
                 Measures.imu.clear();
+                // cout<<"111111111111111111111"<<endl;
                 continue;
             }
 
@@ -919,22 +901,24 @@ int main(int argc, char** argv)
             solve_const_H_time = 0;
             svd_time   = 0;
             t0 = omp_get_wtime();
-            // p_imu->Process(Measures, kf, feats_undistort);//该函数处理返回结果feats_undistort被lidar用到了，不能直接删除
-            feats_undistort = Measures.lidar;
-            // state_point = kf.get_x();//1111
-            // pos_lid = state_point.pos + state_point.rot * state_point.offset_T_L_I;//1111
+            // cout<<"midle........................";
+            p_imu->Process(Measures, kf, feats_undistort);
+            state_point = kf.get_x();
+            pos_lid = state_point.pos + state_point.rot * state_point.offset_T_L_I;
 
             if (feats_undistort->empty() || (feats_undistort == NULL))
             {
                 first_lidar_time = Measures.lidar_beg_time;
-                // p_imu->first_lidar_time = first_lidar_time;////1111
+                p_imu->first_lidar_time = first_lidar_time;
+                // cout<<"FAST-LIO not ready"<<endl;
+                // cout<<"2222222222222222222"<<endl;
                 continue;
             }
 
             flg_EKF_inited = (Measures.lidar_beg_time - first_lidar_time) < INIT_TIME ? \
                             false : true;
             /*** Segment the map in lidar FOV ***/
-            // lasermap_fov_segment();
+            lasermap_fov_segment();
 
             /*** downsample the feature points in a scan ***/
             downSizeFilterSurf.setInputCloud(feats_undistort);
@@ -954,19 +938,21 @@ int main(int argc, char** argv)
                     }
                     ikdtree.Build(feats_down_world->points);
                 }
+                // cout<<"3333333333333333"<<endl;
                 continue;
             }
             int featsFromMapNum = ikdtree.validnum();
             kdtree_size_st = ikdtree.size();
             
             // cout<<"[ mapping ]: In num: "<<feats_undistort->points.size()<<" downsamp "<<feats_down_size<<" Map num: "<<featsFromMapNum<<"effect num:"<<effct_feat_num<<endl;
+            // cout<<"4444444444444444444444444"<<endl;
             /*** ICP and iterated Kalman filter update ***/
             normvec->resize(feats_down_size);
             feats_down_world->resize(feats_down_size);
 
-            // V3D ext_euler = SO3ToEuler(state_point.offset_R_L_I);
-            // fout_pre<<setw(20)<<Measures.lidar_beg_time - first_lidar_time<<" "<<euler_cur.transpose()<<" "<< state_point.pos.transpose()<<" "<<ext_euler.transpose() << " "<<state_point.offset_T_L_I.transpose()<< " " << state_point.vel.transpose() \
-            // <<" "<<state_point.bg.transpose()<<" "<<state_point.ba.transpose()<<" "<<state_point.grav<< endl;
+            V3D ext_euler = SO3ToEuler(state_point.offset_R_L_I);
+            fout_pre<<setw(20)<<Measures.lidar_beg_time - first_lidar_time<<" "<<euler_cur.transpose()<<" "<< state_point.pos.transpose()<<" "<<ext_euler.transpose() << " "<<state_point.offset_T_L_I.transpose()<< " " << state_point.vel.transpose() \
+            <<" "<<state_point.bg.transpose()<<" "<<state_point.ba.transpose()<<" "<<state_point.grav<< endl;
 
             if(0) // If you need to see map point, change to "if(1)"
             {
@@ -986,19 +972,19 @@ int main(int argc, char** argv)
             /*** iterated state estimation ***/
             double t_update_start = omp_get_wtime();
             double solve_H_time = 0;
-            // kf.update_iterated_dyn_share_modified(LASER_POINT_COV, solve_H_time);
-            // state_point = kf.get_x();
-            // euler_cur = SO3ToEuler(state_point.rot);
-            // pos_lid = state_point.pos + state_point.rot * state_point.offset_T_L_I;
-            // geoQuat.x = state_point.rot.coeffs()[0];
-            // geoQuat.y = state_point.rot.coeffs()[1];
-            // geoQuat.z = state_point.rot.coeffs()[2];
-            // geoQuat.w = state_point.rot.coeffs()[3];
+            kf.update_iterated_dyn_share_modified(LASER_POINT_COV, solve_H_time);
+            state_point = kf.get_x();
+            euler_cur = SO3ToEuler(state_point.rot);
+            pos_lid = state_point.pos + state_point.rot * state_point.offset_T_L_I;
+            geoQuat.x = state_point.rot.coeffs()[0];
+            geoQuat.y = state_point.rot.coeffs()[1];
+            geoQuat.z = state_point.rot.coeffs()[2];
+            geoQuat.w = state_point.rot.coeffs()[3];
 
             double t_update_end = omp_get_wtime();
 
             /******* Publish odometry *******/
-            // publish_odometry(pubOdomAftMapped);111111111111111111111111111
+            publish_odometry(pubOdomAftMapped);
 
             /*** add the feature points to map kdtree ***/
             t3 = omp_get_wtime();
@@ -1006,9 +992,11 @@ int main(int argc, char** argv)
             t5 = omp_get_wtime();
             
             /******* Publish points *******/
-            // publish_path(pubPath);
+            publish_path(pubPath);
+            // cout<<"scan_pub_en...........value"<<scan_pub_en<<endl;
+            // cout<<"pcd_save_en...........value"<<pcd_save_en<<endl;
             if (scan_pub_en || pcd_save_en)      publish_frame_world(pubLaserCloudFull);
-            // if (scan_pub_en && scan_body_pub_en) publish_frame_body(pubLaserCloudFull_body);
+            if (scan_pub_en && scan_body_pub_en) publish_frame_body(pubLaserCloudFull_body);
             // publish_effect_world(pubLaserCloudEffect);
             // publish_map(pubLaserCloudMap);
 
@@ -1036,9 +1024,9 @@ int main(int argc, char** argv)
                 s_plot10[time_log_counter] = add_point_size;
                 time_log_counter ++;
                 printf("[ mapping ]: time: IMU + Map + Input Downsample: %0.6f ave match: %0.6f ave solve: %0.6f  ave ICP: %0.6f  map incre: %0.6f ave total: %0.6f icp: %0.6f construct H: %0.6f \n",t1-t0,aver_time_match,aver_time_solve,t3-t1,t5-t3,aver_time_consu,aver_time_icp, aver_time_const_H_time);
-                // ext_euler = SO3ToEuler(state_point.offset_R_L_I);
-                // fout_out << setw(20) << Measures.lidar_beg_time - first_lidar_time << " " << euler_cur.transpose() << " " << state_point.pos.transpose()<< " " << ext_euler.transpose() << " "<<state_point.offset_T_L_I.transpose()<<" "<< state_point.vel.transpose() \
-                // <<" "<<state_point.bg.transpose()<<" "<<state_point.ba.transpose()<<" "<<state_point.grav<<" "<<feats_undistort->points.size()<<endl;
+                ext_euler = SO3ToEuler(state_point.offset_R_L_I);
+                fout_out << setw(20) << Measures.lidar_beg_time - first_lidar_time << " " << euler_cur.transpose() << " " << state_point.pos.transpose()<< " " << ext_euler.transpose() << " "<<state_point.offset_T_L_I.transpose()<<" "<< state_point.vel.transpose() \
+                <<" "<<state_point.bg.transpose()<<" "<<state_point.ba.transpose()<<" "<<state_point.grav<<" "<<feats_undistort->points.size()<<endl;
                 dump_lio_state_to_log(fp);
             }
         }
