@@ -234,7 +234,7 @@ void RGBpointBodyToWorld(PointType const * const pi, PointType * const po, const
     // pose_odom.pose.orientation.z = 0;
     // pose_odom.pose.orientation.w = 1;
     // try{
-    //     listener.transformPose("camera_init", ros::Time(0), pose_odom, "base_footprint", pose_odom);
+    //     listener.transformPose("camera_init", ros::Time(0), pose_odom, "base_link", pose_odom);
     // }
     // catch(tf::TransformException &ex){
     //     ROS_ERROR("%s",ex.what());
@@ -514,7 +514,7 @@ void publish_frame_world(const ros::Publisher & pubLaserCloudFull)
                         new PointCloudXYZI(size, 1));
 
         try{
-            listener.lookupTransform("/camera_init","/base_footprint",
+            listener.lookupTransform("/camera_init","/base_link",
                                ros::Time(0), transform);
         }
         catch (tf::TransformException &ex) {
@@ -569,7 +569,7 @@ void publish_frame_body(const ros::Publisher & pubLaserCloudFull_body)
     pcl::toROSMsg(*laserCloudIMUBody, laserCloudmsg);
     laserCloudmsg.header.stamp = ros::Time().fromSec(lidar_end_time);
     // laserCloudmsg.header.frame_id = "body";
-    laserCloudmsg.header.frame_id = "base_footprint";
+    laserCloudmsg.header.frame_id = "base_link";
     pubLaserCloudFull_body.publish(laserCloudmsg);
     publish_count -= PUBFRAME_PERIOD;
 }
@@ -619,7 +619,7 @@ void publish_odometry(const ros::Publisher & pubOdomAftMapped)
     odomAftMapped.header.frame_id = "camera_init";
     //odomAftMapped.header.frame_id = "velodyne";
     //odomAftMapped.child_frame_id = "body";
-    odomAftMapped.child_frame_id = "base_footprint";
+    odomAftMapped.child_frame_id = "base_link";
 //    odomAftMapped.header.stamp = ros::Time().fromSec(lidar_end_time);// ros::Time().fromSec(lidar_end_time);
     odomAftMapped.header.stamp = ros::Time::now();// ros::Time().fromSec(lidar_end_time);
     set_posestamp(odomAftMapped.pose);
@@ -651,7 +651,7 @@ void publish_odometry(const ros::Publisher & pubOdomAftMapped)
 //    br.sendTransform( tf::StampedTransform( transform, odomAftMapped.header.stamp, "camera_init", "body" ) );
 
     // br.sendTransform( tf::StampedTransform( transform, ros::Time::now(), "camera_init", "body" ) );
-    //br.sendTransform( tf::StampedTransform( transform, ros::Time::now(), "camera_init", "base_footprint" ) );
+    //br.sendTransform( tf::StampedTransform( transform, ros::Time::now(), "camera_init", "base_link" ) );
 }
 
 void publish_path(const ros::Publisher pubPath)

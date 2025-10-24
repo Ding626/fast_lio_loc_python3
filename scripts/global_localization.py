@@ -1,21 +1,81 @@
 #!/usr/bin/env python3
 # coding=utf8
 from __future__ import print_function, division, absolute_import
-
+import tf2_ros
 import copy
 import _thread as thread
 import time
-
+import threading
+import threading
 import open3d as o3d
 import rclpy
 from rclpy.node import Node
 from rclpy.qos import QoSProfile
-import ros_numpy
+import ros2_numpy
 from geometry_msgs.msg import PoseWithCovarianceStamped, Pose, Point, Quaternion
 from nav_msgs.msg import Odometry
 from sensor_msgs.msg import PointCloud2
 import numpy as np
-import tf_transformations
+
+# small replacements for tf_transformations used in this file
+def translation_matrix(t):
+    T = np.eye(4, dtype=float)
+    T[0:3, 3] = np.array(t, dtype=float)
+    return T
+
+
+def quaternion_matrix(q):
+    # q: (x, y, z, w)
+    x, y, z, w = q
+    # normalize
+    qn = np.array([x, y, z, w], dtype=float)
+    qn = qn / np.linalg.norm(qn)
+    x, y, z, w = qn
+    R = np.array([
+        [1 - 2 * (y * y + z * z),     2 * (x * y - z * w),     2 * (x * z + y * w)],
+        [    2 * (x * y + z * w), 1 - 2 * (x * x + z * z),     2 * (y * z - x * w)],
+        [    2 * (x * z - y * w),     2 * (y * z + x * w), 1 - 2 * (x * x + y * y)]
+    ], dtype=float)
+    T = np.eye(4, dtype=float)
+    T[0:3, 0:3] = R
+    return T
+
+
+def translation_from_matrix(T):
+    return T[0:3, 3].copy()
+
+
+def quaternion_from_matrix(T):
+    R = T[0:3, 0:3]
+    m00, m01, m02 = R[0, 0], R[0, 1], R[0, 2]
+    m10, m11, m12 = R[1, 0], R[1, 1], R[1, 2]
+    m20, m21, m22 = R[2, 0], R[2, 1], R[2, 2]
+    tr = m00 + m11 + m22
+    if tr > 0:
+        S = np.sqrt(tr + 1.0) * 2
+        w = 0.25 * S
+        x = (m21 - m12) / S
+        y = (m02 - m20) / S
+        z = (m10 - m01) / S
+    elif (m00 > m11) and (m00 > m22):
+        S = np.sqrt(1.0 + m00 - m11 - m22) * 2
+        w = (m21 - m12) / S
+        x = 0.25 * S
+        y = (m01 + m10) / S
+        z = (m02 + m20) / S
+    elif m11 > m22:
+        S = np.sqrt(1.0 + m11 - m00 - m22) * 2
+        w = (m02 - m20) / S
+        x = (m01 + m10) / S
+        y = 0.25 * S
+        z = (m12 + m21) / S
+    else:
+        S = np.sqrt(1.0 + m22 - m00 - m11) * 2
+        w = (m10 - m01) / S
+        x = (m02 + m20) / S
+        y = (m12 + m21) / S
+        z = 0.25 * S
+    return np.array([x, y, z, w], dtype=float)
 
 global_map = None
 initialized = False
@@ -48,13 +108,13 @@ def pose_to_mat(pose_msg):
                 node.get_logger().error('pose_to_mat: unexpected pose_msg type: %s' % e)
             return np.eye(4)
 
-    T_trans = tf_transformations.translation_matrix((pos.x, pos.y, pos.z))
-    T_rot = tf_transformations.quaternion_matrix((ori.x, ori.y, ori.z, ori.w))
+    T_trans = translation_matrix((pos.x, pos.y, pos.z))
+    T_rot = quaternion_matrix((ori.x, ori.y, ori.z, ori.w))
     return np.matmul(T_trans, T_rot)
   
 
 def msg_to_array(pc_msg):
-    pc_array = ros_numpy.numpify(pc_msg)
+    pc_array = ros2_numpy.numpify(pc_msg)
     pc = np.zeros([len(pc_array), 3])
     pc[:, 0] = pc_array['x']
     pc[:, 1] = pc_array['y']
@@ -109,7 +169,7 @@ def publish_point_cloud(publisher, header, pc):
     data['z'] = pc[:, 2]
     if pc.shape[1] == 4:
         data['intensity'] = pc[:, 3]
-    msg = ros_numpy.msgify(PointCloud2, data)
+    msg = ros2_numpy.msgify(PointCloud2, data)
     msg.header = header
     publisher.publish(msg)
 
@@ -247,8 +307,8 @@ def global_localization(pose_estimation):
         
         # 发布map_to_odom
         map_to_odom = Odometry()
-        xyz = tf_transformations.translation_from_matrix(T_map_to_odom)
-        quat = tf_transformations.quaternion_from_matrix(T_map_to_odom)
+        xyz = translation_from_matrix(T_map_to_odom)
+        quat = quaternion_from_matrix(T_map_to_odom)
         map_to_odom.pose.pose = Pose(Point(*xyz), Quaternion(*quat))
         # map_to_odom.header.stamp = cur_odom.header.stamp
         map_to_odom.header.stamp = lidar_time
@@ -317,7 +377,9 @@ def thread_localization():
 
 
 if __name__ == '__main__':
-    global lidar_time, pub_pc_in_map, pub_submap, pub_map_to_odom, node
+    # module-level globals are declared where needed inside functions; do not use
+    # a global statement at module scope (invalid syntax). The variables used
+    # below will be assigned directly.
     MAP_VOXEL_SIZE = 0.1
     SCAN_VOXEL_SIZE = 0.1
 
@@ -346,7 +408,7 @@ if __name__ == '__main__':
 
     # subscribers
     node.create_subscription(PointCloud2, '/cloud_registered', lambda msg: cb_save_cur_scan(msg), qos)
-    node.create_subscription(Odometry, '/t265/odom/sample', lambda msg: cb_save_cur_odom(msg), qos)
+    node.create_subscription(Odometry, '/odom', lambda msg: cb_save_cur_odom(msg), qos)
 
     # helper to wait for a single message on a topic
     def wait_for_message(topic, msg_type, timeout=None):

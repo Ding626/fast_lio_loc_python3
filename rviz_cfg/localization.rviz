@@ -63,7 +63,7 @@ Visualization Manager:
         Z: 0
       Plane: XY
       Plane Cell Count: 10
-      Reference Frame: base_footprint
+      Reference Frame: base_link
       Value: true
     - Class: rviz/Axes
       Enabled: false
@@ -414,7 +414,7 @@ Visualization Manager:
       Name: Current View
       Near Clip Distance: 0.009999999776482582
       Pitch: 1.5697963237762451
-      Target Frame: base_footprint
+      Target Frame: base_link
       Value: Orbit (rviz)
       Yaw: 1.278587818145752
     Saved: ~

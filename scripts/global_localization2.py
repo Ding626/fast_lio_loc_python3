@@ -10,12 +10,12 @@ import open3d as o3d
 import rclpy
 from rclpy.node import Node
 from rclpy.qos import QoSProfile
-import ros_numpy
+import ros2_numpy
 from geometry_msgs.msg import PoseWithCovarianceStamped, Pose, Point, Quaternion
 from nav_msgs.msg import Odometry
 from sensor_msgs.msg import PointCloud2
 import numpy as np
-import tf_transformations
+import  tf2.transformations
 
 global_map = None
 initialized = False
@@ -47,7 +47,7 @@ def pose_to_mat(pose_msg):
 
 
 def msg_to_array(pc_msg):
-    pc_array = ros_numpy.numpify(pc_msg)
+    pc_array = ros2_numpy.numpify(pc_msg)
     pc = np.zeros([len(pc_array), 3])
     pc[:, 0] = pc_array['x']
     pc[:, 1] = pc_array['y']
@@ -87,7 +87,7 @@ def publish_point_cloud(publisher, header, pc):
     data['z'] = pc[:, 2]
     if pc.shape[1] == 4:
         data['intensity'] = pc[:, 3]
-    msg = ros_numpy.msgify(PointCloud2, data)
+    msg = ros2_numpy.msgify(PointCloud2, data)
     msg.header = header
     publisher.publish(msg)
 

@@ -620,7 +620,7 @@ void publish_frame_body(const rclcpp::Publisher<sensor_msgs::msg::PointCloud2>::
     sensor_msgs::msg::PointCloud2 laserCloudmsg;
     pcl::toROSMsg(*laserCloudIMUBody, laserCloudmsg);
     laserCloudmsg.header.stamp = time_to_msg_from_double(lidar_time.seconds());
-    laserCloudmsg.header.frame_id = "base_footprint";
+    laserCloudmsg.header.frame_id = "base_link";
     pubLaserCloudFull_body->publish(laserCloudmsg);
     publish_count -= PUBFRAME_PERIOD;
 }
@@ -667,7 +667,7 @@ void publish_odometry(const rclcpp::Publisher<nav_msgs::msg::Odometry>::SharedPt
                       tf2_ros::TransformBroadcaster & br)
 {
     odomAftMapped.header.frame_id = "camera_init";
-    odomAftMapped.child_frame_id = "base_footprint";
+    odomAftMapped.child_frame_id = "base_link";
     odomAftMapped.header.stamp = time_to_msg_from_double(rclcpp::Clock().now().seconds());
     set_posestamp(odomAftMapped.pose);
     pubOdomAftMapped->publish(odomAftMapped);
@@ -814,8 +814,8 @@ int main(int argc, char** argv)
     nh->declare_parameter<bool>("publish.scan_bodyframe_pub_en", true);
     nh->declare_parameter<int>("max_iteration", 4);
     nh->declare_parameter<string>("map_file_path", string(""));
-    nh->declare_parameter<string>("common.lid_topic", string("/livox/lidar"));
-    nh->declare_parameter<string>("common.imu_topic", string("/livox/imu"));
+    nh->declare_parameter<string>("common.lid_topic", string("/rslidar_points"));
+    nh->declare_parameter<string>("common.imu_topic", string("/imu"));
     nh->declare_parameter<bool>("common.time_sync_en", false);
     nh->declare_parameter<double>("filter_size_corner", 0.5);
     nh->declare_parameter<double>("filter_size_surf", 0.5);
@@ -889,8 +889,8 @@ int main(int argc, char** argv)
     memset(point_selected_surf, true, sizeof(point_selected_surf));
     memset(res_last, -1000.0f, sizeof(res_last));
 
-    Lidar_T_wrt_IMU<<VEC_FROM_ARRAY(extrinT);
-    Lidar_R_wrt_IMU<<MAT_FROM_ARRAY(extrinR);
+    // Lidar_T_wrt_IMU<<VEC_FROM_ARRAY(extrinT);
+    // Lidar_R_wrt_IMU<<MAT_FROM_ARRAY(extrinR);
     // p_imu->set_extrinsic(Lidar_T_wrt_IMU, Lidar_R_wrt_IMU);
     // p_imu->set_gyr_cov(V3D(gyr_cov, gyr_cov, gyr_cov));
     // p_imu->set_acc_cov(V3D(acc_cov, acc_cov, acc_cov));
@@ -971,7 +971,8 @@ int main(int argc, char** argv)
             // state_point = kf.get_x();//1111
             // pos_lid = state_point.pos + state_point.rot * state_point.offset_T_L_I;//1111
 
-            if (feats_undistort->empty() || (feats_undistort == NULL))
+            // Defensive: check for null pointer before dereferencing
+            if ((feats_undistort == NULL) || feats_undistort->empty())
             {
                 first_lidar_time = Measures.lidar_beg_time;
                 // p_imu->first_lidar_time = first_lidar_time;////1111

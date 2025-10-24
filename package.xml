@@ -7,8 +7,8 @@
   <license>BSD-3-Clause</license>
 
   <buildtool_depend>ament_cmake</buildtool_depend>
-  <build_depend>rosidl_default_generators</build_depend>
-  <exec_depend>rosidl_default_runtime</exec_depend>
+  <!-- <build_depend>rosidl_default_generators</build_depend>
+  <exec_depend>rosidl_default_runtime</exec_depend> -->
 
   <!-- build and run dependencies -->
   <build_depend>rclcpp</build_depend>
@@ -38,34 +38,34 @@
   <build_depend>tf2_geometry_msgs</build_depend>
   <exec_depend>tf2_geometry_msgs</exec_depend>
 
-  <build_depend>tf2_geometry_msgs</build_depend>
-  <exec_depend>tf2_geometry_msgs</exec_depend>
-
   <build_depend>pcl_conversions</build_depend>
   <exec_depend>pcl_conversions</exec_depend>
 
   <build_depend>pcl_msgs</build_depend>
   <exec_depend>pcl_msgs</exec_depend>
 
+  <!-- pcl_ros provides the pcd_to_pointcloud node used in launch files -->
+  <build_depend>pcl_ros</build_depend>
+  <exec_depend>pcl_ros</exec_depend>
+
   <build_depend>eigen3_cmake_module</build_depend>
   <exec_depend>eigen3_cmake_module</exec_depend>
 
   <!-- Use system libeigen3-dev instead of eigen_conversions -->
 
-  <!-- Optional / runtime python deps (install into environment) -->
-  <build_depend>python3</build_depend>
+  <!-- Optional / runtime python deps: managed via requirements.txt and setup.py.
+    Keep only a runtime marker for Python interpreter here. Third-party Python
+    packages (ros_numpy, tf_transformations) are listed in requirements.txt. -->
   <exec_depend>python3</exec_depend>
-  <exec_depend>ros_numpy</exec_depend>
-  <exec_depend>tf_transformations</exec_depend>
 
   <!-- runtime deps for TF2 geometry conversions -->
-  <exec_depend>tf2_geometry_msgs</exec_depend>
 
   <test_depend>ament_lint_auto</test_depend>
   <test_depend>ament_lint_common</test_depend>
 
   <export>
     <!-- C++ nodes still need porting to ROS 2. See CMakeLists.txt comments. -->
-    <member_of_group>rosidl_interface_packages</member_of_group>
+    <!-- <member_of_group>rosidl_interface_packages</member_of_group> -->
+    <build_type>ament_cmake</build_type>
   </export>
 </package>

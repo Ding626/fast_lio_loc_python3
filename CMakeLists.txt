@@ -97,14 +97,16 @@ target_link_libraries(fastlio_mapping
 )
 
 install(TARGETS fastlio_mapping
-  RUNTIME DESTINATION lib/${PROJECT_NAME}
+  DESTINATION lib/${PROJECT_NAME}
 )
-
+install(DIRECTORY launch config map msg scripts
+  DESTINATION share/${PROJECT_NAME}
+)
 # Minimal skeleton node to validate ament build and provide a porting stub
-add_executable(laser_mapping_skeleton src/laser_mapping_node.cpp)
-ament_target_dependencies(laser_mapping_skeleton rclcpp visualization_msgs)
-install(TARGETS laser_mapping_skeleton
-  RUNTIME DESTINATION lib/${PROJECT_NAME}
-)
+# add_executable(laser_mapping_skeleton src/laser_mapping_node.cpp)
+# ament_target_dependencies(laser_mapping_skeleton rclcpp visualization_msgs)
+# install(TARGETS laser_mapping_skeleton
+#   RUNTIME DESTINATION lib/${PROJECT_NAME}
+# )
 
 ament_package()

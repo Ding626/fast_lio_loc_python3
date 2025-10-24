@@ -6,18 +6,40 @@ import argparse
 
 import rclpy
 from rclpy.node import Node
-import tf_transformations
+# import  tf2.transformations
+import tf2_ros
 from geometry_msgs.msg import Pose, Point, Quaternion, PoseWithCovarianceStamped
+import numpy as np
+
+
+def quaternion_from_euler(roll, pitch, yaw):
+    # Convert Euler angles (roll, pitch, yaw) to quaternion (x, y, z, w)
+    cy = np.cos(yaw * 0.5)
+    sy = np.sin(yaw * 0.5)
+    cp = np.cos(pitch * 0.5)
+    sp = np.sin(pitch * 0.5)
+    cr = np.cos(roll * 0.5)
+    sr = np.sin(roll * 0.5)
+
+    w = cr * cp * cy + sr * sp * sy
+    x = sr * cp * cy - cr * sp * sy
+    y = cr * sp * cy + sr * cp * sy
+    z = cr * cp * sy - sr * sp * cy
+    return np.array([x, y, z, w], dtype=float)
 
 
 class PublishInitialPose(Node):
     def __init__(self, x, y, z, yaw, pitch, roll):
         super().__init__('publish_initial_pose')
         self.pub = self.create_publisher(PoseWithCovarianceStamped, '/initialpose', 10)
-        quat = tf_transformations.quaternion_from_euler(roll, pitch, yaw)
+        quat = quaternion_from_euler(roll, pitch, yaw)
         xyz = [x, y, z]
         initial_pose = PoseWithCovarianceStamped()
-        initial_pose.pose.pose = Pose(Point(*xyz), Quaternion(quat[0], quat[1], quat[2], quat[3]))
+        # construct Pose using keyword args to match ROS2 message constructors
+        initial_pose.pose.pose = Pose(
+            position=Point(x=float(xyz[0]), y=float(xyz[1]), z=float(xyz[2])),
+            orientation=Quaternion(x=float(quat[0]), y=float(quat[1]), z=float(quat[2]), w=float(quat[3]))
+        )
         initial_pose.header.frame_id = 'map'
         # publish once after short delay to ensure connections
         self.timer = self.create_timer(1.0, lambda: self.publish_and_exit(initial_pose))
