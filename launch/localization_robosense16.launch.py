@@ -18,10 +18,10 @@ def generate_launch_description():
         pkg_share = get_package_share_directory('fast_lio_localization')
     except Exception:
         # fallback when package discovery isn't available (e.g. running from source)
-        pkg_share = Path('/home/ding/code/SLAM_ws/install/fast_lio_localization/share/fast_lio_localization')
-    config_yaml = Path(pkg_share) / 'config' / 'robosense16.yaml'
+        pkg_share = Path('/home/agilex/cag/SLAM_ws/install/fast_lio_localization/share/fast_lio_localization')
+    config_yaml = Path('/home/agilex/cag/SLAM_ws/src/fast_lio_localization/config/robosense16.yaml')
     params_file = str(config_yaml) if config_yaml.exists() else None
-    map_default = str(Path(pkg_share) / 'map' / 'map.pcd')
+    map_default = str(Path('/home/agilex/cag/SLAM_ws/src/fast_lio_localization/map/map.pcd'))
 
     rviz_arg = DeclareLaunchArgument('rviz', default_value='true', description='Launch rviz')
     map_arg = DeclareLaunchArgument('map', default_value=map_default, description='Path to map PCD')
@@ -46,7 +46,7 @@ def generate_launch_description():
         package='fast_lio_localization',
         executable='fastlio_mapping',
         name='laserMapping',
-        output='screen',
+        output='log',
         parameters=[node_params]
     )
 
@@ -83,24 +83,33 @@ def generate_launch_description():
             package='tf2_ros',
             executable='static_transform_publisher',
             name='base_link_to_laser',
-            arguments=['0.1', '0', '0.4', '3.14', '0', '0', 'base_link', 'laser']
+            arguments=['0.1', '0', '0.4', '0', '0', '0', 'base_link', 'laser']
             # 参数说明: x y z yaw pitch roll frame_id child_frame_id [1](@ref)
         )
 
     # Provide the mandatory 'file_name' parameter (pcl_ros expects statically
     # typed parameter 'file_name' to be set). We also pass frame_id and count.
-    pcd_node = Node(
-        package='pcl_ros',
-        executable='pcd_to_pointcloud',
-        name='map_publisher',
+    # pcd_node = Node(
+    #     package='pcl_ros',
+    #     executable='pcd_to_pointcloud',
+    #     name='map_publisher',
+    #     output='screen',
+    #     arguments=[LaunchConfiguration('map'), '5'],
+    #     remappings=[('cloud_pcd', '/map')],
+    #     parameters=[
+    #         {'frame_id': '/map'},
+    #         {'file_name': LaunchConfiguration('map')},
+    #         {'count': 5}
+    #     ]
+    # )
+
+    # Optional Python-based PCD publisher (uses Open3D and transient_local QoS)
+    py_map_publisher = Node(
+        package='fast_lio_localization',
+        executable='publish_map_from_pcd.py',
+        name='publish_map_from_pcd',
         output='screen',
-        arguments=[LaunchConfiguration('map'), '5'],
-        remappings=[('cloud_pcd', '/map')],
-        parameters=[
-            {'frame_id': '/map'},
-            {'file_name': LaunchConfiguration('map')},
-            {'count': 5}
-        ]
+        arguments=[LaunchConfiguration('map')],
     )
 
     rviz_node = Node(
@@ -120,7 +129,8 @@ def generate_launch_description():
     ld.add_action(py_transform_fusion)
     ld.add_action(py_odom_tf_pub)
     ld.add_action(py_laser_tf_pub)
-    ld.add_action(pcd_node)
+    # ld.add_action(pcd_node)
+    ld.add_action(py_map_publisher)
     ld.add_action(rviz_node)
 
     return ld

@@ -6,6 +6,7 @@ import argparse
 
 import rclpy
 from rclpy.node import Node
+from rclpy.qos import QoSProfile, QoSDurabilityPolicy, QoSReliabilityPolicy
 # import  tf2.transformations
 import tf2_ros
 from geometry_msgs.msg import Pose, Point, Quaternion, PoseWithCovarianceStamped
@@ -31,7 +32,12 @@ def quaternion_from_euler(roll, pitch, yaw):
 class PublishInitialPose(Node):
     def __init__(self, x, y, z, yaw, pitch, roll):
         super().__init__('publish_initial_pose')
-        self.pub = self.create_publisher(PoseWithCovarianceStamped, '/initialpose', 10)
+        qos = QoSProfile(depth=1)
+        qos.durability = QoSDurabilityPolicy.TRANSIENT_LOCAL
+        qos.reliability = QoSReliabilityPolicy.RELIABLE
+        # publish initial pose transiently so late subscribers (the localization
+        # node waiting with TRANSIENT_LOCAL) will receive it
+        self.pub = self.create_publisher(PoseWithCovarianceStamped, '/initialpose', qos)
         quat = quaternion_from_euler(roll, pitch, yaw)
         xyz = [x, y, z]
         initial_pose = PoseWithCovarianceStamped()
@@ -60,7 +66,9 @@ def main():
     parser.add_argument('yaw', type=float)
     parser.add_argument('pitch', type=float)
     parser.add_argument('roll', type=float)
-    args = parser.parse_args()
+    # Use parse_known_args so ROS2 `--ros-args` injected by the launch system
+    # won't cause argparse to fail when the script is run via `ros2 run`.
+    args, _ = parser.parse_known_args()
 
     rclpy.init()
     node = PublishInitialPose(args.x, args.y, args.z, args.yaw, args.pitch, args.roll)

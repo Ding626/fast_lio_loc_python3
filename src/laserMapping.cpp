@@ -332,6 +332,9 @@ void lasermap_fov_segment()
 
 void standard_pcl_cbk(const sensor_msgs::msg::PointCloud2::ConstSharedPtr &msg) 
 {   
+    // Log callback invocation and basic header info
+    // RCLCPP_INFO(rclcpp::get_logger("laserMapping"), "Callback standard_pcl_cbk: received sensor_msgs::msg::PointCloud2, frame_id=%s, stamp=%u.%u",
+                // msg->header.frame_id.c_str(), msg->header.stamp.sec, msg->header.stamp.nanosec);
     // header.stamp is builtin_interfaces::msg::Time; convert to rclcpp::Time
     lidar_time = rclcpp::Time(msg->header.stamp.sec * 1000000000ULL + msg->header.stamp.nanosec);
     mtx_buffer.lock();
@@ -409,6 +412,9 @@ bool   timediff_set_flg = false;
 
 void imu_cbk(const sensor_msgs::msg::Imu::ConstSharedPtr msg_in)
 {
+    // Log callback invocation and basic header info
+    RCLCPP_INFO(rclcpp::get_logger("laserMapping"), "Callback imu_cbk: received sensor_msgs::msg::Imu, frame_id=%s, stamp=%u.%u",
+                msg_in->header.frame_id.c_str(), msg_in->header.stamp.sec, msg_in->header.stamp.nanosec);
     publish_count ++;
     // cout<<"IMU got at: "<<(msg_in->header.stamp.sec + msg_in->header.stamp.nanosec * 1e-9)<<endl;
     // make a local copy if we need to modify the timestamp; otherwise keep const shared ptr
@@ -567,8 +573,8 @@ void publish_frame_world(const rclcpp::Publisher<sensor_msgs::msg::PointCloud2>:
         // pubCloudScan.publish(scanCloudmsg);
 
         try {
-            // lookup latest transform from /laser to /camera_init
-            transform = tf_buffer->lookupTransform("/camera_init", "/laser", tf2::TimePointZero);
+            // lookup latest transform from laser to camera_init (tf2 frame_ids must not start with '/')
+            transform = tf_buffer->lookupTransform("camera_init", "laser", tf2::TimePointZero);
         } catch (const tf2::TransformException & ex) {
             RCLCPP_ERROR(rclcpp::get_logger("laserMapping"), "%s", ex.what());
         }
@@ -829,7 +835,7 @@ int main(int argc, char** argv)
     nh->declare_parameter<double>("mapping.b_acc_cov", 0.0001);
     nh->declare_parameter<double>("preprocess.blind", 0.01);
     nh->declare_parameter<double>("preprocess.max_range", 100.0);
-    nh->declare_parameter<int>("preprocess.lidar_type", AVIA);
+    nh->declare_parameter<int>("preprocess.lidar_type", ROBOSENSE16);
     nh->declare_parameter<int>("preprocess.scan_line", 16);
     nh->declare_parameter<int>("point_filter_num", 2);
     nh->declare_parameter<bool>("feature_extract_enable", false);

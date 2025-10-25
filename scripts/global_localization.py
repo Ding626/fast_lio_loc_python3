@@ -10,7 +10,7 @@ import threading
 import open3d as o3d
 import rclpy
 from rclpy.node import Node
-from rclpy.qos import QoSProfile
+from rclpy.qos import QoSProfile, QoSDurabilityPolicy, QoSReliabilityPolicy
 import ros2_numpy
 from geometry_msgs.msg import PoseWithCovarianceStamped, Pose, Point, Quaternion
 from nav_msgs.msg import Odometry
@@ -114,12 +114,60 @@ def pose_to_mat(pose_msg):
   
 
 def msg_to_array(pc_msg):
-    pc_array = ros2_numpy.numpify(pc_msg)
-    pc = np.zeros([len(pc_array), 3])
-    pc[:, 0] = pc_array['x']
-    pc[:, 1] = pc_array['y']
-    pc[:, 2] = pc_array['z']
-    return pc
+    """Convert a PointCloud2 message to a numpy array of points.
+    This function is robust to different PointCloud2 representations.
+    """
+    # The primary method is to use sensor_msgs_py.point_cloud2.read_points
+    # which is the most robust and official way to parse PointCloud2 messages.
+    try:
+        from sensor_msgs_py import point_cloud2
+        # read_points returns an iterator of structured data.
+        points_generator = point_cloud2.read_points(pc_msg, field_names=("x", "y", "z"), skip_nans=True)
+        
+        # Convert the generator to a list, then to a structured numpy array.
+        points_list = list(points_generator)
+        if not points_list:
+            return np.zeros((0, 3), dtype=np.float64)
+        
+        # Create a structured array from the list of tuples
+        structured_array = np.array(points_list, dtype=[('x', 'f4'), ('y', 'f4'), ('z', 'f4')])
+        
+        # Manually create a new float64 array and copy data column by column.
+        # This is more robust than astype() for structured arrays.
+        pc_array = np.zeros((len(structured_array), 3), dtype=np.float64)
+        pc_array[:, 0] = structured_array['x']
+        pc_array[:, 1] = structured_array['y']
+        pc_array[:, 2] = structured_array['z']
+        
+        return pc_array
+
+    except Exception as e:
+        if node:
+            node.get_logger().error(f'Failed to parse PointCloud2 to array using sensor_msgs_py: {e}')
+
+    # Fallback to ros2_numpy if sensor_msgs_py fails for some reason.
+    try:
+        if node:
+            node.get_logger().warning('Falling back to ros2_numpy to parse PointCloud2.')
+        pc_array = ros2_numpy.numpify(pc_msg)
+        
+        if hasattr(pc_array, 'dtype') and pc_array.dtype.names:
+            # It's a structured array. Extract x, y, z.
+            x = pc_array['x']
+            y = pc_array['y']
+            z = pc_array['z']
+            # Stack them and ensure the result is float64.
+            return np.vstack([x, y, z]).T.astype(np.float64)
+        elif isinstance(pc_array, np.ndarray) and pc_array.ndim == 2 and pc_array.shape[1] >= 3:
+            # It's a regular numpy array.
+            return pc_array[:, :3].astype(np.float64)
+
+    except Exception as e_ros2numpy:
+        if node:
+            node.get_logger().error(f'Fallback to ros2_numpy also failed: {e_ros2numpy}')
+
+    # If all methods fail, return an empty array.
+    return np.zeros((0, 3), dtype=np.float64)
 
 
 def registration_at_scale(pc_scan, pc_map, initial, scale):
@@ -169,9 +217,44 @@ def publish_point_cloud(publisher, header, pc):
     data['z'] = pc[:, 2]
     if pc.shape[1] == 4:
         data['intensity'] = pc[:, 3]
-    msg = ros2_numpy.msgify(PointCloud2, data)
-    msg.header = header
-    publisher.publish(msg)
+    # Try ros2_numpy first, but some ros2_numpy versions expect a dict for
+    # point cloud input. Fall back to sensor_msgs_py.point_cloud2.create_cloud
+    # if msgify raises an exception.
+    try:
+        msg = ros2_numpy.msgify(PointCloud2, data)
+        msg.header = header
+        publisher.publish(msg)
+        return
+    except Exception as e:
+        if node:
+            node.get_logger().warning('ros2_numpy.msgify failed, falling back to sensor_msgs_py: %s' % str(e))
+
+    # Fallback: build PointCloud2 with sensor_msgs_py.point_cloud2.create_cloud
+    try:
+        from sensor_msgs_py import point_cloud2
+        from sensor_msgs.msg import PointField
+        # Build fields list
+        fields = [
+            PointField(name='x', offset=0, datatype=PointField.FLOAT32, count=1),
+            PointField(name='y', offset=4, datatype=PointField.FLOAT32, count=1),
+            PointField(name='z', offset=8, datatype=PointField.FLOAT32, count=1),
+        ]
+        offset = 12
+        if pc.shape[1] == 4:
+            fields.append(PointField(name='intensity', offset=offset, datatype=PointField.FLOAT32, count=1))
+            offset += 4
+
+        # Prepare rows as list of tuples
+        if pc.shape[1] == 4:
+            rows = [tuple(map(float, p[:4])) for p in pc]
+        else:
+            rows = [tuple(map(float, p[:3])) for p in pc]
+
+        msg = point_cloud2.create_cloud(header, fields, rows)
+        publisher.publish(msg)
+    except Exception as e:
+        if node:
+            node.get_logger().error('Failed to publish point cloud fallback: %s' % str(e))
 
 
 def crop_global_map_in_FOV(global_map, pose_estimation, cur_odom):
@@ -251,6 +334,8 @@ def global_localization(pose_estimation):
     print("粗配准...............")
     print("scan_tobe_mapped")
     print(scan_tobe_mapped)
+    print("global_map_all")
+    print(global_map)
     print("global_map_in_FOV")
     print(global_map_in_FOV)
     print("pose_estimation")
@@ -309,7 +394,12 @@ def global_localization(pose_estimation):
         map_to_odom = Odometry()
         xyz = translation_from_matrix(T_map_to_odom)
         quat = quaternion_from_matrix(T_map_to_odom)
-        map_to_odom.pose.pose = Pose(Point(*xyz), Quaternion(*quat))
+        # Correctly initialize the Point and Quaternion objects
+        point = Point()
+        point.x, point.y, point.z = xyz
+        quaternion = Quaternion()
+        quaternion.x, quaternion.y, quaternion.z, quaternion.w = quat
+        map_to_odom.pose.pose = Pose(position=point, orientation=quaternion)
         # map_to_odom.header.stamp = cur_odom.header.stamp
         map_to_odom.header.stamp = lidar_time
         map_to_odom.header.frame_id = 'map'
@@ -334,12 +424,10 @@ def voxel_down_sample(pcd, voxel_size):
 
 def initialize_global_map(pc_msg):
     global global_map
-
+    pc = msg_to_array(pc_msg)
     global_map = o3d.geometry.PointCloud()
-    global_map.points = o3d.utility.Vector3dVector(msg_to_array(pc_msg)[:, :3])
-    global_map = voxel_down_sample(global_map, MAP_VOXEL_SIZE)
-    if node:
-        node.get_logger().info('Global map received.')
+    global_map.points = o3d.utility.Vector3dVector(pc[:, :3])
+    
 
 
 def cb_save_cur_odom(odom_msg):
@@ -376,6 +464,28 @@ def thread_localization():
         global_localization(T_map_to_odom)
 
 
+def wait_for_message(topic, msg_type, timeout=None, qos_profile=None):
+    container = {'msg': None}
+    evt = threading.Event()
+    def _cb(m):
+        container['msg'] = m
+        evt.set()
+    # Use provided qos_profile if given; otherwise fall back to the module-level
+    # `qos` if it exists, or construct a reasonable default. Passing None to
+    # create_subscription raises a TypeError in rclpy, so ensure we always
+    # provide a QoSProfile or an int depth.
+    
+    sub = node.create_subscription(msg_type, topic, _cb, qos_profile)
+    start_time = time.monotonic()
+    while not evt.is_set():
+        rclpy.spin_once(node, timeout_sec=0.1)
+        if timeout is not None and time.monotonic() - start_time > timeout:
+            break
+    node.destroy_subscription(sub)
+    if evt.is_set():
+        return container['msg']
+    return None
+
 if __name__ == '__main__':
     # module-level globals are declared where needed inside functions; do not use
     # a global statement at module scope (invalid syntax). The variables used
@@ -411,28 +521,20 @@ if __name__ == '__main__':
     node.create_subscription(Odometry, '/odom', lambda msg: cb_save_cur_odom(msg), qos)
 
     # helper to wait for a single message on a topic
-    def wait_for_message(topic, msg_type, timeout=None):
-        container = {'msg': None}
-        evt = threading.Event()
-
-        def _cb(m):
-            container['msg'] = m
-            evt.set()
-
-        sub = node.create_subscription(msg_type, topic, _cb, qos)
-        got = evt.wait(timeout)
-        node.destroy_subscription(sub)
-        if got:
-            return container['msg']
-        return None
 
     # 初始化全局地图
     node.get_logger().warning('Waiting for global map......')
-    map_msg = wait_for_message('/map', PointCloud2, timeout=None)
+    # Use TRANSIENT_LOCAL durability for map so late subscribers can receive
+    # a previously-published map (common behavior for static maps).
+    map_qos = QoSProfile(depth=1)
+    map_qos.durability = QoSDurabilityPolicy.TRANSIENT_LOCAL
+    map_qos.reliability = QoSReliabilityPolicy.RELIABLE
+    map_msg = wait_for_message('/map', PointCloud2, timeout=None, qos_profile=map_qos)
     if map_msg is None:
         node.get_logger().error('Did not receive global map')
         rclpy.shutdown()
         raise SystemExit(1)
+    print("initialize_global_map(map_msg)")
     initialize_global_map(map_msg)
 
     # 初始化
@@ -441,7 +543,10 @@ if __name__ == '__main__':
         node.get_logger().warning('Waiting for initial pose....')
 
         # 等待初始位姿
-        pose_msg = wait_for_message('/initialpose', PoseWithCovarianceStamped, timeout=None)
+        pose_qos = QoSProfile(depth=1)
+        pose_qos.durability = QoSDurabilityPolicy.TRANSIENT_LOCAL
+        pose_qos.reliability = QoSReliabilityPolicy.RELIABLE
+        pose_msg = wait_for_message('/initialpose', PoseWithCovarianceStamped, timeout=None, qos_profile=pose_qos)
         if pose_msg is None:
             node.get_logger().warning('Initial pose wait timed out')
             time.sleep(0.1)
